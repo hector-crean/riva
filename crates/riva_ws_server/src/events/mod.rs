@@ -52,29 +52,48 @@ pub struct DrawingPayload {
 
 // Add new  types and payloads for slide management
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"SlideChange\"")]
-pub struct SlideChange;
+#[ts(export, type = "\"RequestSlideChange\"")]
+pub struct RequestSlideChange;
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+pub struct RequestSlideChangePayload {
+    slide_index: usize,
+}
+
+
+
+// Add new  types and payloads for slide management
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, type = "\"SlideChanged\"")]
+pub struct SlideChanged;
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+pub struct SlideChangedPayload {
+    slide_index: usize,
+}
+
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"SlideData\"")]
-pub struct SlideData;
-
-
+#[ts(export, type = "\"RoomJoined\"")]
+pub struct RoomJoined;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
-pub struct SlideChangePayload {
-    room: String,
-    slide_index: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
-pub struct SlideDataPayload {
-    room: String,
-    slide_index: usize,
-    data: Value,
+pub struct RoomJoinedPayload {
+    user_id: String,
 }
 
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, type = "\"RoomLeft\"")]
+pub struct RoomLeft;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+pub struct RoomLeftPayload {
+    user_id: String,
+}
 
 
 // Client-to-server message structure
@@ -116,22 +135,30 @@ where
     pub broadcast: Option<bool>,       // Indicates if this is a broadcast message
 }
 
-// Then update your type aliases to use the appropriate message type
-pub type ClientJoinRoom = ClientMessage<JoinRoom, JoinRoomPayload>;
-pub type ClientLeaveRoom = ClientMessage<LeaveRoom, LeaveRoomPayload>;
-pub type ClientSlideChange = ClientMessage<SlideChange, SlideChangePayload>;
-pub type ClientSlideData = ClientMessage<SlideData, SlideDataPayload>;
 
-pub type ServerJoinRoom = ServerMessage<JoinRoom, JoinRoomPayload>;
-pub type ServerLeaveRoom = ServerMessage<LeaveRoom, LeaveRoomPayload>;
+
+
+
+pub type JoinRoomMessage = ClientMessage<JoinRoom, JoinRoomPayload>;
+pub type LeaveRoomMessage = ClientMessage<LeaveRoom, LeaveRoomPayload>;
+pub type RequestSlideChangeMessage = ClientMessage<RequestSlideChange, RequestSlideChangePayload>;
+pub type SlideChangedMessage = ServerMessage<SlideChanged, SlideChangedPayload>;
+pub type RoomJoinedMessage = ServerMessage<RoomJoined, RoomJoinedPayload>;
+pub type RoomLeftMessage = ServerMessage<RoomLeft, RoomLeftPayload>;
+
 
 // Update the  enum to include new message types
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
-pub enum RivaWsMessage {
-    JoinRoom(ServerJoinRoom),
-    LeaveRoom(ServerLeaveRoom),
-    SlideChange(ClientSlideChange),
-    SlideData(ClientSlideData),
+pub enum PresentationRoomMessage {
+    //client messages
+    JoinRoom(JoinRoomMessage),
+    LeaveRoom(LeaveRoomMessage),
+    RequestSlideChange(RequestSlideChangeMessage),
+    //server messages
+    RoomJoined(RoomJoinedMessage),
+    RoomLeft(RoomLeftMessage),
+    SlideChanged(SlideChangedMessage),
+    
 }
