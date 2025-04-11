@@ -23,7 +23,7 @@ dotenv = "0.15.0"
 tokio = { version = "1.44.2", features = ["full"] }
 url = "2.4.0"
 clap = { version = "4.5.23", features = ["derive"] }
-ts-rs = {version = "10.1.0", features = ["serde-json-impl"]}
+ts-rs = {version = "10.1.0", features = ["serde-json-impl", "chrono-impl"]}
 axum = { version = "0.8.3", features = ["ws"] }
 tower-http = { version = "0.6.2", features = ["cors", "fs"] }
 socketioxide = {version = "0.16.2", features = ["state", "tracing", "extensions", "msgpack"]}

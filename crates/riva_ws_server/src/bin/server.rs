@@ -1,4 +1,4 @@
-use riva_ws_server::{WsServer, WsServerError};
+use riva_ws_server::{WsServer, error::WsServerError};
 use tracing_subscriber::FmtSubscriber;
 
 

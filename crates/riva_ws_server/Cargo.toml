@@ -19,3 +19,4 @@ rmpv = { workspace = true }
 thiserror = { workspace = true }
 strum = { workspace = true }
 ts-rs = { workspace = true }
+chrono = { workspace = true }
