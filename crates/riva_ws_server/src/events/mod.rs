@@ -8,29 +8,6 @@ use crate::RoomId;
 
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"JoinRoom\"")]
-pub struct JoinRoom;
-
-impl JoinRoom {
-    pub const EVENT_NAME: &'static str = "JoinRoom";
-}
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"LeaveRoom\"")]
-pub struct LeaveRoom;
-
-impl LeaveRoom {
-    pub const EVENT_NAME: &'static str = "LeaveRoom";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"Drawing\"")]
-pub struct Drawing;
-
-impl Drawing {
-    pub const EVENT_NAME: &'static str = "Drawing";
-}
-
 // Define payload types
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 pub struct JoinRoomPayload {
@@ -48,11 +25,6 @@ pub struct DrawingPayload {
 
 
 
-// Add new  types and payloads for slide management
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"RequestSlideChange\"")]
-pub struct RequestSlideChange;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 pub struct RequestSlideChangePayload {
@@ -61,11 +33,6 @@ pub struct RequestSlideChangePayload {
 
 
 
-// Add new  types and payloads for slide management
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"SlideChanged\"")]
-pub struct SlideChanged;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 pub struct SlideChangedPayload {
@@ -73,20 +40,12 @@ pub struct SlideChangedPayload {
 }
 
 
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"RoomJoined\"")]
-pub struct RoomJoined;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 pub struct RoomJoinedPayload {
     user_id: String,
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, type = "\"RoomLeft\"")]
-pub struct RoomLeft;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 pub struct RoomLeftPayload {
@@ -97,13 +56,10 @@ pub struct RoomLeftPayload {
 // Client-to-server message structure
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ClientMessage<E, T>
+pub struct ClientMessage<T>
 where
-    E: TS,
     T: TS,
 {
-    #[serde(rename = "type")]
-    pub _type: E,
     pub payload: T,
     // Client-specific fields
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,13 +71,10 @@ where
 // Server-to-client message structure
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ServerMessage<E, T>
+pub struct ServerMessage<T>
 where
-    E: TS,
     T: TS,
 {
-    #[serde(rename = "type")]
-    pub _type: E,
     pub payload: T,
     // Server-specific fields
     pub datetime: DateTime<Utc>,                // Server timestamp for the 
@@ -137,17 +90,17 @@ where
 
 
 
-pub type JoinRoomMessage = ClientMessage<JoinRoom, JoinRoomPayload>;
-pub type LeaveRoomMessage = ClientMessage<LeaveRoom, LeaveRoomPayload>;
-pub type RequestSlideChangeMessage = ClientMessage<RequestSlideChange, RequestSlideChangePayload>;
-pub type SlideChangedMessage = ServerMessage<SlideChanged, SlideChangedPayload>;
-pub type RoomJoinedMessage = ServerMessage<RoomJoined, RoomJoinedPayload>;
-pub type RoomLeftMessage = ServerMessage<RoomLeft, RoomLeftPayload>;
+pub type JoinRoomMessage = ClientMessage<JoinRoomPayload>;
+pub type LeaveRoomMessage = ClientMessage<LeaveRoomPayload>;
+pub type RequestSlideChangeMessage = ClientMessage<RequestSlideChangePayload>;
+pub type SlideChangedMessage = ServerMessage<SlideChangedPayload>;
+pub type RoomJoinedMessage = ServerMessage<RoomJoinedPayload>;
+pub type RoomLeftMessage = ServerMessage<RoomLeftPayload>;
 
 
 // Update the  enum to include new message types
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 #[ts(export)]
 pub enum PresentationRoomMessage {
     //client messages
