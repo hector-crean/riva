@@ -3,28 +3,23 @@ pub mod events;
 
 use axum::routing::get;
 use error::WsServerError;
-use events::{
-   JoinRoom, JoinRoomMessage, PresentationRoomMessage
-};
+use events::PresentationRoomMessage;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use socketioxide::{
     SocketIo,
-    extract::{AckSender, Data, SocketRef, State},
+    extract::{Data, SocketRef, State},
 };
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     future::Future,
     net::SocketAddr,
 };
-use strum::{AsRefStr, Display, EnumString, IntoStaticStr};
 use tokio::sync::RwLock;
-use tracing::{error, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
 use ts_rs::TS;
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 
 
@@ -56,9 +51,9 @@ impl RoomId {
 }
 
 
-impl Into<String> for RoomId {
-    fn into(self) -> String {
-        format!("{}:{}", self.organisation_id, self.room_name)
+impl From<RoomId> for String {
+    fn from(val: RoomId) -> Self {
+        format!("{}:{}", val.organisation_id, val.room_name)
     }
 }
 
