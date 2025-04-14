@@ -1,77 +1,36 @@
 pub mod error;
 pub mod events;
+pub mod handlers;
+pub mod room;
 
 use axum::routing::get;
 use error::WsServerError;
-use events::PresentationRoomMessage;
+use events::{
+    presentation::{PresentationCommand, PresentationEvent}, Command, CommandType, Event, EventType
+};
+use http;
+use room::{presentation::Presentation, room_id::RoomId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socketioxide::{
-    SocketIo,
-    extract::{Data, SocketRef, State},
+    extract::{Data, SocketRef, State}, socket::DisconnectReason, SocketIo
 };
-use std::{
-    collections::HashMap,
-    future::Future,
-    net::SocketAddr,
-};
+use std::{collections::{HashMap, HashSet}, future::Future, net::SocketAddr};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, error, warn, debug, trace};
 use ts_rs::TS;
-
+use crate::room::RoomLike;
 use std::sync::Arc;
 
 
 
 
-#[derive(Debug, Clone)]
-pub enum Room {
-    Presentation {
-        name: String,
-        current_slide: usize,
-        slide_data: Vec<Value>,
-        clients: Vec<String>, // Socket IDs 
-    }
-}
-
-#[derive(Debug, Clone, Default, Hash, Eq, PartialEq, Serialize, Deserialize, TS, PartialOrd, Ord)]
-#[ts(export)]
-pub struct RoomId {
-    room_name: String,
-    organisation_id: String,
-}
-
-impl RoomId {
-    pub fn new(organisation_id: &str, room_name: &str) -> Self {
-        Self { 
-            organisation_id: organisation_id.to_string(), 
-            room_name: room_name.to_string() 
-        }
-    }
-}
-
-
-impl From<RoomId> for String {
-    fn from(val: RoomId) -> Self {
-        format!("{}:{}", val.organisation_id, val.room_name)
-    }
-}
-
-impl TryFrom<String> for RoomId {
-    type Error = &'static str;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match s.split_once(':') {
-            Some((org_id, room_name)) => Ok(RoomId {
-                organisation_id: org_id.to_string(),
-                room_name: room_name.to_string(),
-            }),
-            None => Err("Invalid RoomId format, expected 'organisation_id:room_name'"),
-        }
-    }
-}
-
 // Define the server state to be shared across handlers
+
+#[derive(Clone)]
+pub enum Room {
+    Presentation(Presentation),
+}
 
 #[derive(Default, Clone)]
 pub struct ServerState {
@@ -103,55 +62,159 @@ impl WsServer {
         f(&mut state).await
     }
 
-    async fn on_connect(socket: SocketRef) {
-        info!("socket connected: {}", socket.id);
+    async fn on_connect(socket: SocketRef, State(_): State<Arc<RwLock<ServerState>>>) {
+        info!(socket_id = %socket.id, "Socket connected");
+
+        socket.on_disconnect(|socket: SocketRef, reason: DisconnectReason| async move {
+            info!(
+                socket_id = %socket.id,
+                namespace = %socket.ns(),
+                reason = ?reason,
+                "Socket disconnected"
+            );
+        });
+
+        socket.on("message", || async move {
+          info!("Received message");
+        });
 
         socket.on(
-            "presentation_message",
+            "message",
             |socket: SocketRef,
-             Data::<PresentationRoomMessage>(msg),
+             Data::<Command>(msg),
              State(state): State<Arc<RwLock<ServerState>>>| async move {
-                match msg {
-                    PresentationRoomMessage::JoinRoom(msg) => { }
-                    PresentationRoomMessage::LeaveRoom(msg) => {
+                let room_id = msg.room_id.clone();
+                let room_id_str: String = room_id.clone().into();
+                
+                debug!(
+                    socket_id = %socket.id,
+                    room_id = %room_id_str,
+                    command_type = ?msg.payload,
+                    "Received command"
+                );
+                
+                let mut state_guard = state.write().await;
+
+                let event = match state_guard.rooms.get_mut(&room_id) {
+                    Some(room) => match (room, msg.payload) {
+                        (Room::Presentation(presentation), CommandType::Presentation(cmd)) => {
+                            debug!(
+                                socket_id = %socket.id,
+                                room_id = %room_id_str,
+                                command = ?cmd,
+                                "Processing presentation command"
+                            );
+                            presentation
+                                .transaction(cmd, &socket)
+                                .map(|event| EventType::Presentation(event))
+                        }
+                        (_, cmd_type) => {
+                            warn!(
+                                socket_id = %socket.id,
+                                room_id = %room_id_str,
+                                command_type = ?cmd_type,
+                                "Unsupported operation for room type"
+                            );
+                            None
+                        }
+                    },
+                    None => {
+                        warn!(
+                            socket_id = %socket.id,
+                            room_id = %room_id_str,
+                            "Room not found"
+                        );
+                        None
                     }
-                    PresentationRoomMessage::RequestSlideChange(msg) => {
+                };
+
+                match event {
+                    Some(response) => {
+                        debug!(
+                            socket_id = %socket.id,
+                            room_id = %room_id_str,
+                            event_type = ?response,
+                            "Emitting event to room"
+                        );
+                        if let Err(err) = socket.within(room_id_str).emit("message", &response).await {
+                            // error!(
+                            //     socket_id = %socket.id,
+                            //     room_id = %room_id_str,
+                            //     error = %err,
+                            //     "Failed to emit event"
+                            // );
+                        }
                     }
-                    PresentationRoomMessage::RoomJoined(msg) => {
-                    }
-                    PresentationRoomMessage::RoomLeft(msg) => {
-                    }
-                    PresentationRoomMessage::SlideChanged(msg) => {
+                    None => {
+                        trace!(
+                            socket_id = %socket.id,
+                            room_id = %room_id_str,
+                            "No event to emit"
+                        );
                     }
                 }
-             
             },
         );
-
-      
-
-       
     }
 
     pub async fn run(&self, port: u16) -> Result<(), WsServerError> {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        info!(address = %addr, "Starting WebSocket server");
+
+        // Configure CORS with explicit headers instead of Any
+        let cors = tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([
+                http::Method::GET,
+                http::Method::POST,
+                http::Method::PUT,
+                http::Method::DELETE,
+                http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                http::header::CONTENT_TYPE,
+                http::header::AUTHORIZATION,
+                http::header::ACCEPT,
+                http::header::ORIGIN,
+            ]);
+        debug!("CORS configuration set up");
+
+        // Create a shared state that will be used by both SocketIO and route handlers
+        let shared_state = self.state.clone();
 
         let (socket_io_layer, io) = SocketIo::builder()
-            .with_state(self.state.clone())
+            .with_state(shared_state.clone())
             .build_layer();
+        debug!("SocketIO layer created");
 
-        // Register the on_connect handler for the default namespace
+        // Register the on_connect handler for the root namespace
         io.ns("/", Self::on_connect);
+        debug!("Root namespace handler registered");
 
         let app = axum::Router::new()
-            .route("/", get(|| async { "Hello, World!" }))
-            .with_state(io)
-            .layer(socket_io_layer);
+            .route("/room", get(handlers::room::get_rooms).post(handlers::room::create_room))
+            .with_state(shared_state) // Use the same shared state for route handlers
+            .layer(socket_io_layer)
+            .layer(cors);
+        debug!("Axum router configured");
 
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+        info!(port = port, "Binding TCP listener");
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                info!(address = %addr, "TCP listener bound successfully");
+                l
+            },
+            Err(e) => {
+                error!(address = %addr, error = %e, "Failed to bind TCP listener");
+                return Err(e.into());
+            }
+        };
 
-        info!("Server running on http://{}", addr);
-        let _ = axum::serve(listener, app).await;
+        info!(address = %addr, "Starting server");
+        if let Err(e) = axum::serve(listener, app).await {
+            error!(error = %e, "Server error");
+            return Err(e.into());
+        }
 
         Ok(())
     }
