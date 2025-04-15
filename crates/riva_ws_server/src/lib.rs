@@ -6,7 +6,7 @@ use axum::routing::get;
 use error::WsServerError;
 
 use http;
-use room::room_id::RoomId;
+use room::{presentation::PresentationRoom, room_id::RoomId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socketioxide::{
@@ -14,7 +14,7 @@ use socketioxide::{
     extract::{Data, SocketRef, State},
     socket::DisconnectReason,
 };
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet},
@@ -30,7 +30,8 @@ use ts_rs::TS;
 #[derive(Default)]
 pub struct ServerState {
     pub rooms: HashMap<RoomId, Box<dyn RoomLike>>,
-    command_handlers: HashMap<TypeId, Vec<Box<dyn CommandHandler>>>,
+    pub command_handlers: HashMap<TypeId, Vec<Box<dyn CommandHandler>>>,
+    pub registry: RoomRegistry,
 }
 
 impl ServerState {
@@ -65,15 +66,19 @@ impl ServerState {
     }
 }
 
-// Define a trait for command handlers to improve type safety
+// Improved CommandHandler trait with Future support
 pub trait CommandHandler: Send + Sync {
     fn command_type_id(&self) -> TypeId;
-    fn handle(&self, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>>;
+    fn handle<'a>(
+        &'a self, 
+        command: Box<dyn Any>, 
+        socket: &'a SocketRef
+    ) -> Pin<Box<dyn Future<Output = Option<Box<dyn Any>>> + Send + 'a>>;
 }
 
-// Generic implementation for specific command/event types
+// Generic implementation for specific command/event types with async support
 struct TypedCommandHandler<C: Send + Sync + 'static, E: Send + Sync + 'static> {
-    handler: Box<dyn Fn(C, &SocketRef) -> Option<E> + Send + Sync>,
+    handler: Box<dyn Fn(C, &SocketRef) -> Pin<Box<dyn Future<Output = Option<E>> + Send + '_>> + Send + Sync>,
     _phantom: std::marker::PhantomData<(C, E)>,
 }
 
@@ -84,26 +89,42 @@ impl<C: Send + Sync + 'static, E: Send + Sync + 'static> CommandHandler
         TypeId::of::<C>()
     }
 
-    fn handle(&self, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>> {
+    fn handle<'a>(
+        &'a self, 
+        command: Box<dyn Any>, 
+        socket: &'a SocketRef
+    ) -> Pin<Box<dyn Future<Output = Option<Box<dyn Any>>> + Send + 'a>> {
         match command.downcast::<C>() {
-            Ok(concrete_command) => (self.handler)(*concrete_command, socket)
-                .map(|event| Box::new(event) as Box<dyn Any>),
-            Err(_) => None,
+            Ok(concrete_command) => {
+                let future = (self.handler)(*concrete_command, socket);
+                Box::pin(async move {
+                    future.await.map(|event| Box::new(event) as Box<dyn Any>)
+                })
+            },
+            Err(_) => Box::pin(async { None }),
         }
     }
 }
 
 impl ServerState {
-    // Register a handler for a specific command type with improved type safety
-    pub fn register_command_handler<C: Send + Sync + 'static, E: Send + Sync + 'static>(
+    // Register a handler for a specific command type with improved type safety and async support
+    pub fn register_command_handler<C, E, F, Fut>(
         &mut self,
-        handler: impl Fn(C, &SocketRef) -> Option<E> + Send + Sync + 'static,
-    ) -> &mut Self {
-        // Return self for method chaining
+        handler: F,
+    ) -> &mut Self 
+    where
+        C: Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        F: Fn(C, &SocketRef) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Option<E>> + Send + 'static,
+    {
         let command_type_id = TypeId::of::<C>();
 
         let typed_handler = TypedCommandHandler {
-            handler: Box::new(handler),
+            handler: Box::new(move |cmd, socket| {
+                let fut = handler(cmd, socket);
+                Box::pin(fut) as Pin<Box<dyn Future<Output = Option<E>> + Send + '_>>
+            }),
             _phantom: std::marker::PhantomData,
         };
 
@@ -113,6 +134,25 @@ impl ServerState {
             .push(Box::new(typed_handler));
 
         self // Return self for method chaining
+    }
+    
+    // Process a command with the appropriate handler
+    pub async fn process_command<C: Clone + Send + Sync + 'static>(
+        &self,
+        command: C,
+        socket: &SocketRef,
+    ) -> Option<Box<dyn Any>> {
+        let command_type_id = TypeId::of::<C>();
+        
+        if let Some(handlers) = self.command_handlers.get(&command_type_id) {
+            for handler in handlers {
+                if let Some(result) = handler.handle(Box::new(command.clone()), socket).await {
+                    return Some(result);
+                }
+            }
+        }
+        
+        None
     }
 }
 
@@ -241,6 +281,7 @@ impl<T: TypedRoom> RoomEmitter for T {
 }
 
 // 3. Room registry for managing different room types
+#[derive(Default)]
 pub struct RoomRegistry {
     factories:
         HashMap<String, Box<dyn Fn(RoomConfig) -> Result<Box<dyn RoomLike>, String> + Send + Sync>>,
@@ -249,19 +290,19 @@ pub struct RoomRegistry {
 // Define RoomConfig for room creation and configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomConfig {
+    pub room_id: RoomId,
     pub name: Option<String>,
     pub max_users: Option<usize>,
     pub is_public: bool,
-    pub metadata: HashMap<String, Value>,
 }
 
 impl Default for RoomConfig {
     fn default() -> Self {
         Self {
+            room_id: RoomId::default(),
             name: None,
             max_users: None,
             is_public: true,
-            metadata: HashMap::new(),
         }
     }
 }
@@ -314,33 +355,27 @@ impl RoomRegistry {
 #[derive(Clone)]
 pub struct WsServer {
     pub state: Arc<RwLock<ServerState>>,
-    registry: Arc<RoomRegistry>,
 }
 
 impl WsServer {
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(ServerState::default())),
-            registry: Arc::new(RoomRegistry::new()),
+           
         }
     }
 
-    pub fn with_registry(registry: RoomRegistry) -> Self {
-        Self {
-            state: Arc::new(RwLock::new(ServerState::default())),
-            registry: Arc::new(registry),
-        }
-    }
+   
 
     // Register a room type
-    pub fn register_room_type<R, F>(&mut self, room_type: &str, factory: F)
+    pub async fn register_room_type<R, F>(&mut self, room_type: &str, factory: F)
     where
         R: RoomLike + 'static,
         F: Fn(RoomConfig) -> Result<R, String> + Send + Sync + 'static,
     {
-        let registry =
-            Arc::get_mut(&mut self.registry).expect("Cannot modify registry after sharing");
-        registry.register(room_type, factory);
+        let mut state = self.state.write().await;
+
+        state.registry.register(room_type, factory);
     }
 
     // Create a new room using the registry
@@ -358,7 +393,7 @@ impl WsServer {
         }
 
         // Create the room using the registry
-        let room = self.registry.create_room(room_type, config)?;
+        let room = state.registry.create_room(room_type, config)?;
 
         // Insert the room
         state.rooms.insert(room_id, room);
@@ -366,11 +401,17 @@ impl WsServer {
         Ok(())
     }
 
-    // Add a method to register global command handlers
-    pub async fn register_command_handler<C: Send + Sync + 'static, E: Send + Sync + 'static>(
+    // Add a method to register global command handlers with async support
+    pub async fn register_command_handler<C, E, F, Fut>(
         &self,
-        handler: impl Fn(C, &SocketRef) -> Option<E> + Send + Sync + 'static,
-    ) {
+        handler: F,
+    )
+    where
+        C: Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        F: Fn(C, &SocketRef) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Option<E>> + Send + 'static,
+    {
         let mut state = self.state.write().await;
         state.register_command_handler(handler);
     }
@@ -421,12 +462,14 @@ impl WsServer {
         // Register the on_connect handler for the root namespace
         // io.ns("/", Self::on_connect);
 
+     
+
         debug!("Root namespace handler registered");
 
         let app = axum::Router::new()
             .route(
                 "/room",
-                get(handlers::room::get_rooms).post(handlers::room::create_room),
+                get(handlers::room::get_rooms),
             )
             .with_state(shared_state) // Use the same shared state for route handlers
             .layer(socket_io_layer)
@@ -447,18 +490,7 @@ impl WsServer {
 
         info!(address = %addr, "Starting server");
 
-        // Start background task for cleaning up empty rooms
-        let server_state = self.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
-            loop {
-                interval.tick().await;
-                let removed = server_state.state.write().await.cleanup_empty_rooms().await;
-                if removed > 0 {
-                    info!(removed = removed, "Cleaned up empty rooms");
-                }
-            }
-        });
+     
 
         if let Err(e) = axum::serve(listener, app).await {
             error!(error = %e, "Server error");

@@ -70,6 +70,7 @@ impl RoomEvent for PresentationEvent {
 }
 
 // Example implementation for a presentation room
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct PresentationRoom {
     pub id: RoomId,
     pub slides: Vec<String>,

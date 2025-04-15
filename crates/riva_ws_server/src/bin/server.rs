@@ -26,65 +26,37 @@ async fn main() -> Result<(), WsServerError> {
     server.register_room_type(
         "presentation",
         |config: RoomConfig| -> Result<PresentationRoom, String> {
-            // Extract room_id from metadata or use a default
-            let room_id = if let Some(value) = config.metadata.get("room_id") {
-                if let Some(id_str) = value.as_str() {
-                    id_str
-                        .to_string()
-                        .try_into()
-                        .map_err(|_| "Invalid room_id format".to_string())?
-                } else {
-                    return Err("room_id must be a string".to_string());
-                }
-            } else {
-                // This is just a placeholder - in practice you'd want to get this from somewhere
-                RoomId::new("default_org", "default_presentation")
-            };
-
             Ok(PresentationRoom {
-                id: room_id,
+                id: config.room_id,
                 slides: Vec::new(),
                 current_slide: 0,
                 connected_users: HashSet::new(),
             })
         },
-    );
+    ).await;
 
-    // Register video rooms
-    server.register_room_type("video", |config: RoomConfig| -> Result<Video, String> {
-        let room_id = if let Some(value) = config.metadata.get("room_id") {
-            if let Some(id_str) = value.as_str() {
-                id_str
-                    .to_string()
-                    .try_into()
-                    .map_err(|_| "Invalid room_id format".to_string())?
-            } else {
-                return Err("room_id must be a string".to_string());
-            }
-        } else {
-            RoomId::new("default_org", "default_video")
-        };
+    let room_id = RoomId::new("org1", "presentation1");
+    let config = RoomConfig {
+        room_id: room_id.clone(),
+        name: None,
+        is_public: true,
+        max_users: Some(50),
+    };
+    
+    server.create_room(room_id, "presentation", config).await.unwrap();
 
-        let video_url = config
-            .metadata
-            .get("video_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+    let room_id = RoomId::new("org1", "presentation2");
+    let config = RoomConfig {
+        room_id: room_id.clone(),
+        name: None,
+        is_public: true,
+        max_users: Some(50),
+    };
+    
 
-        Ok(Video::new(room_id, "system".to_string(), video_url))
-    });
+    server.create_room(room_id, "presentation", config).await.unwrap();
 
-    // Register global command handlers if needed
-    server
-        .register_command_handler(
-            |cmd: PresentationCommand, socket: &SocketRef| {
-                // Global handler for presentation commands
-                // This could be used for logging, analytics, etc.
-                None::<PresentationEvent>
-            },
-        )
-        .await;
+
 
     tracing::info!("Server starting on port 5555");
     server.run(5555).await?;

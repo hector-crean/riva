@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use std::fmt;
 
 
 #[derive(
@@ -37,5 +38,11 @@ impl TryFrom<String> for RoomId {
             }),
             None => Err("Invalid RoomId format, expected 'organisation_id:room_name'"),
         }
+    }
+}
+
+impl fmt::Display for RoomId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.organisation_id, self.room_name)
     }
 }
