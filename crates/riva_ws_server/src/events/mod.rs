@@ -1,4 +1,5 @@
 pub mod presentation;
+pub mod video;
 
 use chrono::{DateTime, Utc};
 use presentation::{PresentationCommand, PresentationEvent};
@@ -44,13 +45,12 @@ where
 
 
 
-
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(untagged)]
 pub enum CommandType {
     Presentation(PresentationCommand),
+    Video(VideoCommand),
 }
 
 pub type Command = CommandMessage<CommandType>;
@@ -62,6 +62,7 @@ pub type Command = CommandMessage<CommandType>;
 #[serde(untagged)]
 pub enum EventType {
     Presentation(PresentationEvent),
+    Video(VideoEvent),
 }
 
 pub type Event = EventMessage<EventType>;

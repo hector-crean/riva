@@ -3,6 +3,11 @@ use socketioxide::extract::SocketRef;
 use serde_json::Value;
 use std::collections::HashSet;
 use tracing::{debug, trace};
+use crate::events::{CommandType, EventType};
+use std::collections::HashMap;
+
+use super::RoomMetadata;
+
 
 #[derive(Debug, Clone)]
 pub struct Presentation {
@@ -25,76 +30,84 @@ impl Presentation {
             clients: HashSet::new(),
         }
     }
+    fn transaction(&mut self, command: PresentationCommand, socket: &SocketRef) -> Option<PresentationEvent> {
+        match command {
+            PresentationCommand::NextSlide => {
+                if self.current_slide < self.slide_data.len() - 1 {
+                    self.current_slide += 1;
+                    Some(PresentationEvent::SlideChanged {
+                        slide_index: self.current_slide,
+                        initiated_by: socket.id.to_string(),
+                    })
+                } else {
+                    None
+                }
+            },
+            PresentationCommand::PreviousSlide => {
+                if self.current_slide > 0 {
+                    self.current_slide -= 1;
+                    Some(PresentationEvent::SlideChanged {
+                        slide_index: self.current_slide,
+                        initiated_by: socket.id.to_string(),
+                    })
+                } else {
+                    None
+                }
+            },
+            PresentationCommand::JumpToSlide(index) => {
+                if index < self.slide_data.len() {
+                    self.current_slide = index;
+                    Some(PresentationEvent::SlideChanged {
+                        slide_index: self.current_slide,
+                        initiated_by: socket.id.to_string(),
+                    })
+                } else {
+                    debug!("Attempted to jump to invalid slide index: {}", index);
+                    None
+                }
+            },
+            // Add other command handlers as needed
+            _ => {
+                debug!("Unhandled presentation command: {:?}", command);
+                None
+            }
+        }
+    }
 }
 
 impl RoomLike for Presentation {
     type Command = PresentationCommand;
     type Event = PresentationEvent;
-    fn transaction(&mut self, cmd: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
-        match cmd {
-            PresentationCommand::ChangeSlide { slide_index, .. } => {
-                debug!(
-                    socket_id = %socket.id,
-                    old_slide = self.current_slide,
-                    new_slide = slide_index,
-                    "Changing slide"
-                );
-                self.current_slide = slide_index;
-                Some(PresentationEvent::SlideChanged {
-                    slide_index: self.current_slide,
-                })
-            }
-            PresentationCommand::JoinPresentation {
-                room_id,
-            } => {
-                let room_id_str: String = room_id.clone().into();
-                debug!(
-                    socket_id = %socket.id,
-                    room_id = %room_id_str,
-                    "Client joining presentation"
-                );
-                socket.join(room_id_str);
-                self.clients.insert(socket.id.as_str().to_string());
-                Some(PresentationEvent::PresentationJoined {
-                    socket_id: socket.id.as_str().to_string(),
-                    room_id: room_id.clone(),
-                })
-            }
-            PresentationCommand::LeavePresentation { room_id } => {
-                let room_id_str: String = room_id.clone().into();
-                // debug!(
-                //     socket_id = %socket.id,
-                //     client_id = %client_id,
-                //     room_id = %room_id_str,
-                //     "Client leaving presentation"
-                // );
-                socket.leave(room_id_str);
-                self.clients.remove(&socket.id.as_str().to_string());
-                Some(PresentationEvent::PresentationLeft  { socket_id: socket.id.as_str().to_string(), room_id: room_id.clone()})
+    fn process_typed_command(&mut self, command: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
+        self.transaction(command, socket)
+    }
+    fn process_command(&mut self, command: CommandType, socket: &SocketRef) -> Option<EventType> {
+        match command {
+            CommandType::Presentation(cmd) => {
+                trace!("Processing presentation command: {:?}", cmd);
+                self.process_typed_command(cmd, socket)
+                    .map(EventType::Presentation)
+            },
+            _ => {
+                debug!("Received non-presentation command for presentation room");
+                None
             }
         }
     }
-    fn add_client(&mut self, client_id: String, socket_id: String) -> bool {
-        debug!(
-            client_id = %client_id,
-            socket_id = %socket_id,
-            clients_count = self.clients.len() + 1,
-            "Adding client to presentation"
-        );
-        self.clients.insert(socket_id);
-        true
+    fn join_user(&mut self, socket_id: String) -> Option<EventType> {
+       todo!()
     }
-    fn remove_client(&mut self, client_id: &str) -> bool {
-        debug!(
-            client_id = %client_id,
-            clients_count = self.clients.len() - 1,
-            "Removing client from presentation"
-        );
-        self.clients.remove(client_id);
-        true
+    fn leave_user(&mut self, socket_id: String) -> Option<EventType> {
+       todo!()
     }
-    fn is_empty(&self) -> bool {
-        trace!(clients_count = self.clients.len(), "Checking if presentation is empty");
-        self.clients.is_empty()
+    fn get_metadata(&self) -> RoomMetadata {
+       todo!()
+    }
+    fn room_type(&self) -> &'static str {
+        todo!()
+    }
+    fn get_users(&self) -> Vec<String> {
+        todo!()
     }
 }
+

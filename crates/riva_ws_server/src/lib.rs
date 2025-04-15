@@ -9,13 +9,13 @@ use events::{
     presentation::{PresentationCommand, PresentationEvent}, Command, CommandType, Event, EventType
 };
 use http;
-use room::{presentation::Presentation, room_id::RoomId};
+use room::{presentation::Presentation, room_id::RoomId, RoomMetadata};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socketioxide::{
     extract::{Data, SocketRef, State}, socket::DisconnectReason, SocketIo
 };
-use std::{collections::{HashMap, HashSet}, future::Future, net::SocketAddr};
+use std::{any::{Any, TypeId}, collections::{HashMap, HashSet}, future::Future, net::SocketAddr};
 use tokio::sync::RwLock;
 use tracing::{info, error, warn, debug, trace};
 use ts_rs::TS;
@@ -27,14 +27,33 @@ use std::sync::Arc;
 
 // Define the server state to be shared across handlers
 
-#[derive(Clone)]
-pub enum Room {
-    Presentation(Presentation),
+#[derive(Default)]
+pub struct ServerState {
+    pub rooms: HashMap<RoomId, Box<dyn RoomLike<Command = Box<dyn Any>, Event = Box<dyn Any>>>>,
+    command_handlers: HashMap<TypeId, Vec<TypeId>>,
 }
 
-#[derive(Default, Clone)]
-pub struct ServerState {
-    pub rooms: HashMap<RoomId, Room>,
+impl ServerState {
+
+    pub fn register_room_type<R: RoomLike + 'static, C: 'static>(&mut self) {
+        let command_type_id = TypeId::of::<C>();
+        let room_type_id = TypeId::of::<R>();
+        
+        self.command_handlers
+            .entry(command_type_id)
+            .or_default()
+            .push(room_type_id);
+    }
+    
+    pub fn dispatch_command(&mut self, room_id: &RoomId, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>> {
+        if let Some(room) = self.rooms.get_mut(room_id) {
+            if room.can_handle_command((*command).type_id()) {
+                return room.process_any_command(command, socket);
+            }
+        }
+        None
+    }
+
 }
 
 #[derive(Clone, Default)]
@@ -49,8 +68,10 @@ impl WsServer {
         }
     }
 
-    pub async fn state(&self) -> ServerState {
-        self.state.read().await.clone()
+
+
+    pub async fn state(&self) -> &RwLock<ServerState> {
+        &self.state
     }
 
     pub async fn with_state_mut<F, Fut, R>(&self, f: F) -> R
@@ -96,28 +117,7 @@ impl WsServer {
                 let mut state_guard = state.write().await;
 
                 let event = match state_guard.rooms.get_mut(&room_id) {
-                    Some(room) => match (room, msg.payload) {
-                        (Room::Presentation(presentation), CommandType::Presentation(cmd)) => {
-                            debug!(
-                                socket_id = %socket.id,
-                                room_id = %room_id_str,
-                                command = ?cmd,
-                                "Processing presentation command"
-                            );
-                            presentation
-                                .transaction(cmd, &socket)
-                                .map(|event| EventType::Presentation(event))
-                        }
-                        (_, cmd_type) => {
-                            warn!(
-                                socket_id = %socket.id,
-                                room_id = %room_id_str,
-                                command_type = ?cmd_type,
-                                "Unsupported operation for room type"
-                            );
-                            None
-                        }
-                    },
+                    Some(room) => room.process_command(msg.payload, &socket),
                     None => {
                         warn!(
                             socket_id = %socket.id,
@@ -139,7 +139,7 @@ impl WsServer {
                         if let Err(err) = socket.within(room_id_str).emit("message", &response).await {
                             // error!(
                             //     socket_id = %socket.id,
-                            //     room_id = %room_id_str,
+                            //     room_id = %room_id_str.clone(),
                             //     error = %err,
                             //     "Failed to emit event"
                             // );
@@ -211,11 +211,77 @@ impl WsServer {
         };
 
         info!(address = %addr, "Starting server");
+
+        // Start background task for cleaning up empty rooms
+        let server_state = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+            loop {
+                interval.tick().await;
+                let removed = server_state.cleanup_empty_rooms().await;
+                if removed > 0 {
+                    info!(removed = removed, "Cleaned up empty rooms");
+                }
+            }
+        });
+
         if let Err(e) = axum::serve(listener, app).await {
             error!(error = %e, "Server error");
             return Err(e.into());
         }
 
         Ok(())
+    }
+
+    // Create a new room
+    pub async fn create_room(&self, room_id: RoomId, room_type: &str, config: room::RoomConfig) 
+        -> Result<(), String> 
+    {
+        let mut state = self.state.write().await;
+        
+        // Check if room already exists
+        if state.rooms.contains_key(&room_id) {
+            return Err("Room already exists".to_string());
+        }
+        
+        // Create the room
+        let room = room::RoomFactory::create_room(room_type, config)?;
+        
+        // Insert the room
+        state.rooms.insert(room_id, room);
+        
+        Ok(())
+    }
+    
+    // Get room by ID
+    pub async fn get_room(&self, room_id: &RoomId) -> Option<RoomMetadata> {
+        let state = self.state.read().await;
+        state.rooms.get(room_id).map(|room| room.get_metadata())
+    }
+    
+    // List all rooms
+    pub async fn list_rooms(&self) -> Vec<(RoomId, RoomMetadata)> {
+        let state = self.state.read().await;
+        state.rooms
+            .iter()
+            .map(|(id, room)| (id.clone(), room.get_metadata()))
+            .collect()
+    }
+    
+    // Clean up empty rooms
+    pub async fn cleanup_empty_rooms(&self) -> usize {
+        let mut state = self.state.write().await;
+        let empty_rooms: Vec<RoomId> = state.rooms
+            .iter()
+            .filter(|(_, room)| room.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
+        
+        let count = empty_rooms.len();
+        for room_id in empty_rooms {
+            state.rooms.remove(&room_id);
+        }
+        
+        count
     }
 }
