@@ -1,9 +1,55 @@
 use socketioxide::extract::SocketRef;
 use tracing::debug;
 
-use crate::events::{video::{VideoCommand, VideoEvent}, CommandType, EventType};
 
-use super::{room_id::RoomId, RoomLike, RoomMetadata};
+use super::{room_id::RoomId};
+
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use ts_rs::TS;
+
+use crate::{RoomCommand, RoomEvent, TypedRoom};
+
+
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "type")]
+pub enum VideoCommand {
+   StartVideo {
+    room_id: RoomId,
+   }
+}
+
+impl RoomCommand for VideoCommand {
+    const COMMAND_NAME: &'static str = "video";
+    fn room_id(&self) -> RoomId {
+        match self {
+            Self::StartVideo { room_id } => room_id.clone(),
+        }
+    }
+
+   
+}
+
+
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "type")]
+pub enum VideoEvent {
+    VideoStarted
+}
+
+impl RoomEvent for VideoEvent {
+    fn event_name(&self) -> &'static str {
+        "video"
+    }
+}
+
 
 
 
@@ -17,42 +63,19 @@ impl Video {
     pub fn new(room_id: RoomId, socket_id: String, video_url: String) -> Self {
         Self { room_id, socket_id, video_url }
     }
-    fn transaction(&mut self, command: VideoCommand, socket: &SocketRef) -> Option<VideoEvent> {
+   
+}
+impl TypedRoom for Video {
+    type Command = VideoCommand;
+    type Event = VideoEvent;
+    fn process_command(&mut self, command: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
+        todo!()
+    }
+    fn room_id(&self) -> RoomId {
+        self.room_id.clone()
+    }
+    async fn emit_event(&self, socket: &SocketRef, event: Self::Event) -> Result<(), String> {
         todo!()
     }
 }
 
-impl RoomLike for Video {
-    type Command = VideoCommand;
-    type Event = VideoEvent;
-    fn process_typed_command(&mut self, command: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
-        self.transaction(command, socket)
-    }
-    fn process_command(&mut self, command: CommandType, socket: &SocketRef) -> Option<EventType> {
-        match command {
-            CommandType::Video(command) => {
-                self.process_typed_command(command, socket)
-                    .map(EventType::Video)
-            }
-            _ => {
-                debug!("Received non-video command for video room");
-                None
-            }
-        }
-    }
-    fn join_user(&mut self, socket_id: String) -> Option<EventType> {
-        todo!()
-    }
-    fn leave_user(&mut self, socket_id: String) -> Option<EventType> {
-        todo!()
-    }
-    fn get_metadata(&self) -> RoomMetadata {
-        todo!()
-    }
-    fn room_type(&self) -> &'static str {
-        todo!()
-    }
-    fn get_users(&self) -> Vec<String> {
-        todo!()
-    }
-}

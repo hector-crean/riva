@@ -1,113 +1,125 @@
-use crate::{events::presentation::{PresentationCommand, PresentationEvent}, room::RoomLike};
-use socketioxide::extract::SocketRef;
+use crate::{RoomLike, TypedRoom};
 use serde_json::Value;
+use socketioxide::extract::SocketRef;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use tracing::{debug, trace};
-use crate::events::{CommandType, EventType};
-use std::collections::HashMap;
-
-use super::RoomMetadata;
 
 
-#[derive(Debug, Clone)]
-pub struct Presentation {
-    name: String,
-    current_slide: usize,
-    slide_data: Vec<Value>,
-    clients: HashSet<String>, //socket_ids
+use super::room_id::RoomId;
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use crate::{RoomCommand, RoomEvent};
+
+// #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+// pub struct ChangeSlide {
+//     pub slide_index: usize,
+// }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "type")]
+pub enum PresentationCommand {
+    JoinPresentation { room_id: RoomId },
+    LeavePresentation { room_id: RoomId },
+    ChangeSlide { slide_index: usize },
 }
 
-impl Presentation {
-    pub fn new(
-        name: String,
-        current_slide: usize,
-        slide_data: Vec<Value>,
-    ) -> Self {
-        Self {
-            name,
-            current_slide,
-            slide_data,
-            clients: HashSet::new(),
-        }
-    }
-    fn transaction(&mut self, command: PresentationCommand, socket: &SocketRef) -> Option<PresentationEvent> {
-        match command {
-            PresentationCommand::NextSlide => {
-                if self.current_slide < self.slide_data.len() - 1 {
-                    self.current_slide += 1;
-                    Some(PresentationEvent::SlideChanged {
-                        slide_index: self.current_slide,
-                        initiated_by: socket.id.to_string(),
-                    })
-                } else {
-                    None
-                }
-            },
-            PresentationCommand::PreviousSlide => {
-                if self.current_slide > 0 {
-                    self.current_slide -= 1;
-                    Some(PresentationEvent::SlideChanged {
-                        slide_index: self.current_slide,
-                        initiated_by: socket.id.to_string(),
-                    })
-                } else {
-                    None
-                }
-            },
-            PresentationCommand::JumpToSlide(index) => {
-                if index < self.slide_data.len() {
-                    self.current_slide = index;
-                    Some(PresentationEvent::SlideChanged {
-                        slide_index: self.current_slide,
-                        initiated_by: socket.id.to_string(),
-                    })
-                } else {
-                    debug!("Attempted to jump to invalid slide index: {}", index);
-                    None
-                }
-            },
-            // Add other command handlers as needed
-            _ => {
-                debug!("Unhandled presentation command: {:?}", command);
-                None
-            }
+impl RoomCommand for PresentationCommand {
+    const COMMAND_NAME: &'static str = "presentation";
+    // fn command_name(&self) -> &'static str {
+    //     match self {
+    //         Self::JoinPresentation { .. } => "join_presentation",
+    //         Self::LeavePresentation { .. } => "leave_presentation",
+    //         Self::ChangeSlide { .. } => "change_slide",
+    //     }
+    // }
+    fn room_id(&self) -> RoomId {
+        match self {
+            Self::JoinPresentation { room_id } => room_id.clone(),
+            Self::LeavePresentation { room_id } => room_id.clone(),
+            Self::ChangeSlide { .. } => todo!(),
         }
     }
 }
 
-impl RoomLike for Presentation {
+// #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+// pub struct SlideChanged {
+//     pub slide_index: usize,
+// }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "type")]
+pub enum PresentationEvent {
+    PresentationJoined { socket_id: String, room_id: RoomId },
+    PresentationLeft { socket_id: String, room_id: RoomId },
+    SlideChanged { slide_index: usize },
+}
+
+impl RoomEvent for PresentationEvent {
+    fn event_name(&self) -> &'static str {
+        match self {
+            Self::PresentationJoined { .. } => "presentation_joined",
+            Self::PresentationLeft { .. } => "presentation_left",
+            Self::SlideChanged { .. } => "slide_changed",
+        }
+    }
+}
+
+// Example implementation for a presentation room
+pub struct PresentationRoom {
+    pub id: RoomId,
+    pub slides: Vec<String>,
+    pub current_slide: usize,
+    pub connected_users: HashSet<String>,
+}
+
+impl TypedRoom for PresentationRoom {
     type Command = PresentationCommand;
     type Event = PresentationEvent;
-    fn process_typed_command(&mut self, command: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
-        self.transaction(command, socket)
+
+    fn room_id(&self) -> RoomId {
+        self.id.clone()
     }
-    fn process_command(&mut self, command: CommandType, socket: &SocketRef) -> Option<EventType> {
+    fn process_command(
+        &mut self,
+        command: Self::Command,
+        socket: &SocketRef,
+    ) -> Option<Self::Event> {
         match command {
-            CommandType::Presentation(cmd) => {
-                trace!("Processing presentation command: {:?}", cmd);
-                self.process_typed_command(cmd, socket)
-                    .map(EventType::Presentation)
-            },
-            _ => {
-                debug!("Received non-presentation command for presentation room");
-                None
+            PresentationCommand::JoinPresentation { room_id } => {
+                self.connected_users.insert(socket.id.to_string());
+                Some(PresentationEvent::PresentationJoined {
+                    socket_id: socket.id.to_string(),
+                    room_id,
+                })
+            }
+            PresentationCommand::LeavePresentation { room_id } => {
+                self.connected_users.remove(&socket.id.to_string());
+                Some(PresentationEvent::PresentationLeft {
+                    socket_id: socket.id.to_string(),
+                    room_id,
+                })
+            }
+            PresentationCommand::ChangeSlide { slide_index } => {
+                self.current_slide = slide_index;
+                Some(PresentationEvent::SlideChanged { slide_index })
             }
         }
     }
-    fn join_user(&mut self, socket_id: String) -> Option<EventType> {
-       todo!()
-    }
-    fn leave_user(&mut self, socket_id: String) -> Option<EventType> {
-       todo!()
-    }
-    fn get_metadata(&self) -> RoomMetadata {
-       todo!()
-    }
-    fn room_type(&self) -> &'static str {
-        todo!()
-    }
-    fn get_users(&self) -> Vec<String> {
-        todo!()
+    async fn emit_event(
+        &self,
+        socket: &SocketRef,
+        event: Self::Event,
+    ) -> Result<(), String> {
+        let room_id: String = self.room_id().into();
+        socket
+            .within(room_id)
+            .emit("message", &event)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
-

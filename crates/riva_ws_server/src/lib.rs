@@ -1,74 +1,379 @@
 pub mod error;
-pub mod events;
 pub mod handlers;
 pub mod room;
 
 use axum::routing::get;
 use error::WsServerError;
-use events::{
-    presentation::{PresentationCommand, PresentationEvent}, Command, CommandType, Event, EventType
-};
+
 use http;
-use room::{presentation::Presentation, room_id::RoomId, RoomMetadata};
+use room::room_id::RoomId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socketioxide::{
-    extract::{Data, SocketRef, State}, socket::DisconnectReason, SocketIo
+    SocketIo,
+    extract::{Data, SocketRef, State},
+    socket::DisconnectReason,
 };
-use std::{any::{Any, TypeId}, collections::{HashMap, HashSet}, future::Future, net::SocketAddr};
-use tokio::sync::RwLock;
-use tracing::{info, error, warn, debug, trace};
-use ts_rs::TS;
-use crate::room::RoomLike;
 use std::sync::Arc;
-
-
-
+use std::{
+    any::{Any, TypeId},
+    collections::{HashMap, HashSet},
+    future::Future,
+    net::SocketAddr,
+};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, trace, warn};
+use ts_rs::TS;
 
 // Define the server state to be shared across handlers
 
 #[derive(Default)]
 pub struct ServerState {
-    pub rooms: HashMap<RoomId, Box<dyn RoomLike<Command = Box<dyn Any>, Event = Box<dyn Any>>>>,
-    command_handlers: HashMap<TypeId, Vec<TypeId>>,
+    pub rooms: HashMap<RoomId, Box<dyn RoomLike>>,
+    command_handlers: HashMap<TypeId, Vec<Box<dyn CommandHandler>>>,
 }
 
 impl ServerState {
+    // Get room by ID
+    pub async fn get_room(&self, room_id: &RoomId) -> Option<RoomMetadata> {
+        self.rooms.get(room_id).map(|room| room.get_metadata())
+    }
 
-    pub fn register_room_type<R: RoomLike + 'static, C: 'static>(&mut self) {
+    // List all rooms
+    pub async fn list_rooms(&self) -> Vec<(RoomId, RoomMetadata)> {
+        self.rooms
+            .iter()
+            .map(|(id, room)| (id.clone(), room.get_metadata()))
+            .collect()
+    }
+
+    // Clean up empty rooms
+    pub async fn cleanup_empty_rooms(&mut self) -> usize {
+        let empty_rooms: Vec<RoomId> = self
+            .rooms
+            .iter()
+            .filter(|(_, room)| room.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        let count = empty_rooms.len();
+        for room_id in empty_rooms {
+            self.rooms.remove(&room_id);
+        }
+
+        count
+    }
+}
+
+// Define a trait for command handlers to improve type safety
+pub trait CommandHandler: Send + Sync {
+    fn command_type_id(&self) -> TypeId;
+    fn handle(&self, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>>;
+}
+
+// Generic implementation for specific command/event types
+struct TypedCommandHandler<C: Send + Sync + 'static, E: Send + Sync + 'static> {
+    handler: Box<dyn Fn(C, &SocketRef) -> Option<E> + Send + Sync>,
+    _phantom: std::marker::PhantomData<(C, E)>,
+}
+
+impl<C: Send + Sync + 'static, E: Send + Sync + 'static> CommandHandler
+    for TypedCommandHandler<C, E>
+{
+    fn command_type_id(&self) -> TypeId {
+        TypeId::of::<C>()
+    }
+
+    fn handle(&self, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>> {
+        match command.downcast::<C>() {
+            Ok(concrete_command) => (self.handler)(*concrete_command, socket)
+                .map(|event| Box::new(event) as Box<dyn Any>),
+            Err(_) => None,
+        }
+    }
+}
+
+impl ServerState {
+    // Register a handler for a specific command type with improved type safety
+    pub fn register_command_handler<C: Send + Sync + 'static, E: Send + Sync + 'static>(
+        &mut self,
+        handler: impl Fn(C, &SocketRef) -> Option<E> + Send + Sync + 'static,
+    ) -> &mut Self {
+        // Return self for method chaining
         let command_type_id = TypeId::of::<C>();
-        let room_type_id = TypeId::of::<R>();
-        
+
+        let typed_handler = TypedCommandHandler {
+            handler: Box::new(handler),
+            _phantom: std::marker::PhantomData,
+        };
+
         self.command_handlers
             .entry(command_type_id)
             .or_default()
-            .push(room_type_id);
-    }
-    
-    pub fn dispatch_command(&mut self, room_id: &RoomId, command: Box<dyn Any>, socket: &SocketRef) -> Option<Box<dyn Any>> {
-        if let Some(room) = self.rooms.get_mut(room_id) {
-            if room.can_handle_command((*command).type_id()) {
-                return room.process_any_command(command, socket);
-            }
-        }
-        None
-    }
+            .push(Box::new(typed_handler));
 
+        self // Return self for method chaining
+    }
 }
 
-#[derive(Clone, Default)]
+// A more structured approach for room management with socketioxide
+
+// 1. Define a type-safe event system for rooms
+pub trait RoomEvent: for<'de> Deserialize<'de> + Serialize + Send + Sync + 'static {
+    fn event_name(&self) -> &'static str;
+}
+
+pub trait RoomCommand: for<'de> Deserialize<'de> + Serialize + Send + Sync + 'static {
+    const COMMAND_NAME: &'static str;
+    fn room_id(&self) -> RoomId;
+}
+
+// 2. Improved RoomLike trait with generic type parameters
+pub trait RoomLike: Send + Sync + 'static {
+    fn room_type(&self) -> &'static str;
+    fn is_empty(&self) -> bool;
+
+    // Type-erased command processing methods
+    fn can_handle_command(&self, command_type_id: &TypeId) -> bool;
+    fn process_any_command(
+        &mut self,
+        command: Box<dyn Any>,
+        socket: &SocketRef,
+    ) -> Option<Box<dyn Any>>;
+
+    // JSON-based command processing for external interfaces
+    fn can_handle_command_name(&self, command_name: &str) -> bool;
+
+    fn get_metadata(&self) -> RoomMetadata;
+}
+
+pub trait RoomEmitter: RoomLike {
+    fn emit_event(
+        &self,
+        socket: &SocketRef,
+        event: Box<dyn Any + Send + Sync>,
+    ) -> impl Future<Output = Result<(), String>> + Send;
+}
+
+// Improved TypedRoom trait with better type safety and serialization support
+pub trait TypedRoom: RoomLike {
+    type Command: RoomCommand;
+    type Event: RoomEvent;
+
+    fn room_id(&self) -> RoomId;
+    fn process_command(
+        &mut self,
+        command: Self::Command,
+        socket: &SocketRef,
+    ) -> Option<Self::Event>;
+    fn emit_event(
+        &self,
+        socket: &SocketRef,
+        event: Self::Event,
+    ) -> impl Future<Output = Result<(), String>> + Send;
+}
+
+impl<T: TypedRoom> RoomLike for T {
+    fn room_type(&self) -> &'static str {
+        std::any::type_name::<T>()
+            .split("::")
+            .last()
+            .unwrap_or("Unknown")
+    }
+
+    fn is_empty(&self) -> bool {
+        // Implementation depends on your empty state
+        true
+    }
+
+    fn can_handle_command(&self, command_type_id: &TypeId) -> bool {
+        *command_type_id == TypeId::of::<T::Command>()
+    }
+
+    fn process_any_command(
+        &mut self,
+        command: Box<dyn Any>,
+        socket: &SocketRef,
+    ) -> Option<Box<dyn Any>> {
+        if let Ok(concrete_command) = command.downcast::<T::Command>() {
+            self.process_command(*concrete_command, socket)
+                .map(|event| Box::new(event) as Box<dyn Any>)
+        } else {
+            None
+        }
+    }
+
+    // These would now leverage the RoomCommand/RoomEvent traits
+    fn can_handle_command_name(&self, command_name: &str) -> bool {
+        // Now we can use the COMMAND_NAME constant from RoomCommand
+        command_name == T::Command::COMMAND_NAME
+    }
+
+    fn get_metadata(&self) -> RoomMetadata {
+        // Default implementation that can be overridden
+        RoomMetadata {
+            room_type: self.room_type().to_string(),
+            name: None,
+            user_count: 0,
+            is_public: true,
+            metadata: HashMap::new(),
+        }
+    }
+}
+
+impl<T: TypedRoom> RoomEmitter for T {
+    async fn emit_event(
+        &self,
+        socket: &SocketRef,
+        event: Box<dyn Any + Send + Sync>,
+    ) -> Result<(), String> {
+        if let Ok(concrete_event) = event.downcast::<T::Event>() {
+            let room_id_str: String = self.room_id().into();
+            socket
+                .within(room_id_str)
+                .emit(T::Event::event_name(&concrete_event), &*concrete_event)
+                .await
+                .map_err(|e| e.to_string())
+        } else {
+            Err("Event type mismatch".to_string())
+        }
+    }
+}
+
+// 3. Room registry for managing different room types
+pub struct RoomRegistry {
+    factories:
+        HashMap<String, Box<dyn Fn(RoomConfig) -> Result<Box<dyn RoomLike>, String> + Send + Sync>>,
+}
+
+// Define RoomConfig for room creation and configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomConfig {
+    pub name: Option<String>,
+    pub max_users: Option<usize>,
+    pub is_public: bool,
+    pub metadata: HashMap<String, Value>,
+}
+
+impl Default for RoomConfig {
+    fn default() -> Self {
+        Self {
+            name: None,
+            max_users: None,
+            is_public: true,
+            metadata: HashMap::new(),
+        }
+    }
+}
+
+// Also need to define RoomMetadata which is used in get_room and list_rooms methods
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RoomMetadata {
+    pub room_type: String,
+    pub name: Option<String>,
+    pub user_count: usize,
+    pub is_public: bool,
+    pub metadata: HashMap<String, Value>,
+}
+
+impl RoomRegistry {
+    pub fn new() -> Self {
+        Self {
+            factories: HashMap::new(),
+        }
+    }
+
+    pub fn register<R, F>(&mut self, room_type: &str, factory: F)
+    where
+        R: RoomLike + 'static,
+        F: Fn(RoomConfig) -> Result<R, String> + Send + Sync + 'static,
+    {
+        let boxed_factory = Box::new(
+            move |config: RoomConfig| -> Result<Box<dyn RoomLike>, String> {
+                factory(config).map(|room| Box::new(room) as Box<dyn RoomLike>)
+            },
+        );
+
+        self.factories.insert(room_type.to_string(), boxed_factory);
+    }
+
+    pub fn create_room(
+        &self,
+        room_type: &str,
+        config: RoomConfig,
+    ) -> Result<Box<dyn RoomLike>, String> {
+        match self.factories.get(room_type) {
+            Some(factory) => factory(config),
+            None => Err(format!("Unknown room type: {}", room_type)),
+        }
+    }
+}
+
+// 4. Improved WsServer with the registry
+#[derive(Clone)]
 pub struct WsServer {
     pub state: Arc<RwLock<ServerState>>,
+    registry: Arc<RoomRegistry>,
 }
 
 impl WsServer {
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(ServerState::default())),
+            registry: Arc::new(RoomRegistry::new()),
         }
     }
 
+    pub fn with_registry(registry: RoomRegistry) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(ServerState::default())),
+            registry: Arc::new(registry),
+        }
+    }
 
+    // Register a room type
+    pub fn register_room_type<R, F>(&mut self, room_type: &str, factory: F)
+    where
+        R: RoomLike + 'static,
+        F: Fn(RoomConfig) -> Result<R, String> + Send + Sync + 'static,
+    {
+        let registry =
+            Arc::get_mut(&mut self.registry).expect("Cannot modify registry after sharing");
+        registry.register(room_type, factory);
+    }
+
+    // Create a new room using the registry
+    pub async fn create_room(
+        &self,
+        room_id: RoomId,
+        room_type: &str,
+        config: RoomConfig,
+    ) -> Result<(), String> {
+        let mut state = self.state.write().await;
+
+        // Check if room already exists
+        if state.rooms.contains_key(&room_id) {
+            return Err("Room already exists".to_string());
+        }
+
+        // Create the room using the registry
+        let room = self.registry.create_room(room_type, config)?;
+
+        // Insert the room
+        state.rooms.insert(room_id, room);
+
+        Ok(())
+    }
+
+    // Add a method to register global command handlers
+    pub async fn register_command_handler<C: Send + Sync + 'static, E: Send + Sync + 'static>(
+        &self,
+        handler: impl Fn(C, &SocketRef) -> Option<E> + Send + Sync + 'static,
+    ) {
+        let mut state = self.state.write().await;
+        state.register_command_handler(handler);
+    }
 
     pub async fn state(&self) -> &RwLock<ServerState> {
         &self.state
@@ -81,80 +386,6 @@ impl WsServer {
     {
         let mut state = self.state.write().await;
         f(&mut state).await
-    }
-
-    async fn on_connect(socket: SocketRef, State(_): State<Arc<RwLock<ServerState>>>) {
-        info!(socket_id = %socket.id, "Socket connected");
-
-        socket.on_disconnect(|socket: SocketRef, reason: DisconnectReason| async move {
-            info!(
-                socket_id = %socket.id,
-                namespace = %socket.ns(),
-                reason = ?reason,
-                "Socket disconnected"
-            );
-        });
-
-        socket.on("message", || async move {
-          info!("Received message");
-        });
-
-        socket.on(
-            "message",
-            |socket: SocketRef,
-             Data::<Command>(msg),
-             State(state): State<Arc<RwLock<ServerState>>>| async move {
-                let room_id = msg.room_id.clone();
-                let room_id_str: String = room_id.clone().into();
-                
-                debug!(
-                    socket_id = %socket.id,
-                    room_id = %room_id_str,
-                    command_type = ?msg.payload,
-                    "Received command"
-                );
-                
-                let mut state_guard = state.write().await;
-
-                let event = match state_guard.rooms.get_mut(&room_id) {
-                    Some(room) => room.process_command(msg.payload, &socket),
-                    None => {
-                        warn!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            "Room not found"
-                        );
-                        None
-                    }
-                };
-
-                match event {
-                    Some(response) => {
-                        debug!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            event_type = ?response,
-                            "Emitting event to room"
-                        );
-                        if let Err(err) = socket.within(room_id_str).emit("message", &response).await {
-                            // error!(
-                            //     socket_id = %socket.id,
-                            //     room_id = %room_id_str.clone(),
-                            //     error = %err,
-                            //     "Failed to emit event"
-                            // );
-                        }
-                    }
-                    None => {
-                        trace!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            "No event to emit"
-                        );
-                    }
-                }
-            },
-        );
     }
 
     pub async fn run(&self, port: u16) -> Result<(), WsServerError> {
@@ -188,11 +419,15 @@ impl WsServer {
         debug!("SocketIO layer created");
 
         // Register the on_connect handler for the root namespace
-        io.ns("/", Self::on_connect);
+        // io.ns("/", Self::on_connect);
+
         debug!("Root namespace handler registered");
 
         let app = axum::Router::new()
-            .route("/room", get(handlers::room::get_rooms).post(handlers::room::create_room))
+            .route(
+                "/room",
+                get(handlers::room::get_rooms).post(handlers::room::create_room),
+            )
             .with_state(shared_state) // Use the same shared state for route handlers
             .layer(socket_io_layer)
             .layer(cors);
@@ -203,7 +438,7 @@ impl WsServer {
             Ok(l) => {
                 info!(address = %addr, "TCP listener bound successfully");
                 l
-            },
+            }
             Err(e) => {
                 error!(address = %addr, error = %e, "Failed to bind TCP listener");
                 return Err(e.into());
@@ -218,7 +453,7 @@ impl WsServer {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
             loop {
                 interval.tick().await;
-                let removed = server_state.cleanup_empty_rooms().await;
+                let removed = server_state.state.write().await.cleanup_empty_rooms().await;
                 if removed > 0 {
                     info!(removed = removed, "Cleaned up empty rooms");
                 }
@@ -231,57 +466,5 @@ impl WsServer {
         }
 
         Ok(())
-    }
-
-    // Create a new room
-    pub async fn create_room(&self, room_id: RoomId, room_type: &str, config: room::RoomConfig) 
-        -> Result<(), String> 
-    {
-        let mut state = self.state.write().await;
-        
-        // Check if room already exists
-        if state.rooms.contains_key(&room_id) {
-            return Err("Room already exists".to_string());
-        }
-        
-        // Create the room
-        let room = room::RoomFactory::create_room(room_type, config)?;
-        
-        // Insert the room
-        state.rooms.insert(room_id, room);
-        
-        Ok(())
-    }
-    
-    // Get room by ID
-    pub async fn get_room(&self, room_id: &RoomId) -> Option<RoomMetadata> {
-        let state = self.state.read().await;
-        state.rooms.get(room_id).map(|room| room.get_metadata())
-    }
-    
-    // List all rooms
-    pub async fn list_rooms(&self) -> Vec<(RoomId, RoomMetadata)> {
-        let state = self.state.read().await;
-        state.rooms
-            .iter()
-            .map(|(id, room)| (id.clone(), room.get_metadata()))
-            .collect()
-    }
-    
-    // Clean up empty rooms
-    pub async fn cleanup_empty_rooms(&self) -> usize {
-        let mut state = self.state.write().await;
-        let empty_rooms: Vec<RoomId> = state.rooms
-            .iter()
-            .filter(|(_, room)| room.is_empty())
-            .map(|(id, _)| id.clone())
-            .collect();
-        
-        let count = empty_rooms.len();
-        for room_id in empty_rooms {
-            state.rooms.remove(&room_id);
-        }
-        
-        count
     }
 }
