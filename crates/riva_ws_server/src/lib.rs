@@ -3,10 +3,10 @@ pub mod events;
 pub mod handlers;
 pub mod room;
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use error::WsServerError;
 use events::{
-    presentation::{PresentationCommand, PresentationEvent}, Command, CommandType, Event, EventType
+    presentation::{PresentationCommand, PresentationEvent}, ClientMessage, ClientEvent, ServerEvent
 };
 use http;
 use room::{presentation::Presentation, room_id::RoomId};
@@ -118,7 +118,7 @@ impl WsServer {
         socket.on(
             "message",
             |socket: SocketRef,
-             Data::<Command>(msg),
+             Data::<ClientMessage>(msg),
              State(state): State<Arc<RwLock<ServerState>>>| async move {
                 let room_id = msg.room_id.clone();
                 let room_id_str: String = room_id.clone().into();
@@ -134,7 +134,7 @@ impl WsServer {
 
                 let event = match state_guard.rooms.get_mut(&room_id) {
                     Some(room) => match (room, msg.payload) {
-                        (Room::Presentation(presentation), CommandType::Presentation(cmd)) => {
+                        (Room::Presentation(presentation), ClientEvent::Presentation(cmd)) => {
                             info!(
                                 socket_id = %socket.id,
                                 room_id = %room_id_str,
@@ -143,8 +143,8 @@ impl WsServer {
                             );
                             presentation
                                 .transaction(room_id, cmd, &socket)
-                                .map(|event| EventType::Presentation(event))
                         }
+
                         (_, _) => {
                             warn!(
                                 socket_id = %socket.id,
@@ -238,8 +238,16 @@ impl WsServer {
         debug!("Root namespace handler registered");
 
         let app = axum::Router::new()
-            .route("/room", get(handlers::room::get_rooms).post(handlers::room::create_room))
+            .nest("/rooms", axum::Router::new()
+                .route("/", get(handlers::room::get_rooms).post(handlers::room::create_room))
+                .route("/{room_id}", get(handlers::room::get_room)
+                    .put(handlers::room::update_room)
+                    .delete(handlers::room::delete_room))
+                .route("/{room_id}/upsert", post(handlers::room::upsert_room))
+                .route("/{room_id}/broadcast-event", post(handlers::room::broadcast_event))
+            )
             .with_state(shared_state) // Use the same shared state for route handlers
+            .layer(axum::Extension(io.clone())) // Add the IO instance as an extension
             .layer(socket_io_layer)
             .layer(cors);
         debug!("Axum router configured");

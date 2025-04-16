@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::room::{room_id::RoomId, RoomCommand, RoomEvent};
+use crate::room::{room_id::RoomId, RoomCommandLike, RoomEventLike};
 
 
 
@@ -22,7 +22,7 @@ pub enum PresentationCommand {
 }
 
 
-impl RoomCommand for PresentationCommand {
+impl RoomCommandLike for PresentationCommand {
     const COMMAND_NAME: &'static str = "presentation";
     
 }
@@ -36,24 +36,14 @@ impl RoomCommand for PresentationCommand {
 #[ts(export)]
 #[serde(tag = "type")]
 pub enum PresentationEvent {
-    PresentationJoined {
-        socket_id: String,
-        room_id: RoomId,
-    },
-    PresentationLeft {
-        socket_id: String,
-        room_id: RoomId,
-    },
     SlideChanged {
         slide_index: usize,
     },
 }
 
-impl RoomEvent for PresentationEvent {
+impl RoomEventLike for PresentationEvent {
     fn event_name(&self) -> &'static str {
         match self {
-            PresentationEvent::PresentationJoined { .. } => "PresentationJoined",
-            PresentationEvent::PresentationLeft { .. } => "PresentationLeft",
             PresentationEvent::SlideChanged { .. } => "SlideChanged",
         }
     }

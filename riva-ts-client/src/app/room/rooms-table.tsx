@@ -1,8 +1,8 @@
 "use client";
 import {  useRivaWs } from "@/hooks/socket-io";
-import { CommandMessage } from "@/types/CommandMessage";
+import { ClientMessage } from "@/types/ClientMessage";
 import { Room } from "@/types/Room";
-import { CommandType } from "@/types/CommandType";
+import { ClientEvent } from "@/types/ClientEvent";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import CreateRoomForm from "./create-room-form";
@@ -22,8 +22,8 @@ import { GetRoomsResponse } from "@/types/GetRoomsResponse";
 import { match } from "ts-pattern";
 import { Presentation } from "@/types/Presentation";
 import { toast } from "sonner";
-import { EventMessage } from "@/types/EventMessage";
-import { EventType } from "@/types/EventType";
+import { ServerMessage } from "@/types/ServerMessage";
+import { ServerEvent } from "@/types/ServerEvent";
 
 
 type RefetchRoomFn = (options?: RefetchOptions) => Promise<QueryObserverResult<GetRoomsResponse, Error>>
@@ -35,7 +35,7 @@ const RoomRow = ({
 }: {
   room: Room;
   refetchRoom: RefetchRoomFn
-  emitCommand: (command: CommandMessage<CommandType>) => void
+  emitCommand: (command: ClientMessage<ClientEvent>) => void
 }) => {
   return match(room)
   .with({ type: "Presentation" }, (room) => (
@@ -58,7 +58,7 @@ const PresentationRow = ({
   presentation: Presentation;
   id: string;
   refetchRoom: RefetchRoomFn;
-  emitCommand: (command: CommandMessage<CommandType>) => void
+  emitCommand: (command: ClientMessage<ClientEvent>) => void
 }) => {
  
 
@@ -111,7 +111,7 @@ const PresentationRow = ({
 
 
 interface RoomTableProps {
-  emitCommand: (command: CommandMessage<CommandType>) => void
+  emitCommand: (command: ClientMessage<ClientEvent>) => void
 }
 const RoomTable = ({emitCommand}: RoomTableProps) => {
   const fetchRooms = async (): Promise<GetRoomsResponse> => {

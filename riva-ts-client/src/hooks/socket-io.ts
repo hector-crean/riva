@@ -1,9 +1,9 @@
 "use client";
 
-import { CommandMessage } from "@/types/CommandMessage";
-import { CommandType } from "@/types/CommandType";
-import { EventMessage } from "@/types/EventMessage";
-import { EventType } from "@/types/EventType";
+import { ClientMessage } from "@/types/ClientMessage";
+import { ClientEvent } from "@/types/ClientEvent";
+import { ServerMessage } from "@/types/ServerMessage";
+import { ServerEvent } from "@/types/ServerEvent";
 import {} from "@/types/RoomEvent";
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
@@ -15,10 +15,10 @@ interface CustomSocket extends Socket {
   on(event: "connect", listener: () => void): this;
   on(event: "disconnect", listener: () => void): this;
   on(event: "connect_error", listener: (err: Error) => void): this;
-  on(event: "message", listener: (data: EventMessage<EventType>) => void): this;
+  on(event: "message", listener: (data: ServerMessage<ServerEvent>) => void): this;
 }
 
-// export const handleEvent = (event: EventMessage<EventType>): void => {
+// export const handleEvent = (event: ServerMessage<ServerEvent>): void => {
 //   console.log("Received event:", event);
 //   match(event.payload)
 //     .with({ type: 'PresentationJoined' }, (event) => {
@@ -36,12 +36,12 @@ interface CustomSocket extends Socket {
 // };
 
 const useRivaWs = (
-  cb: (msg: EventMessage<EventType>) => Promise<void>
+  cb: (msg: ServerMessage<ServerEvent>) => Promise<void>
 ) => {
   const socketRef = useRef<CustomSocket | null>(null);
 
   // Function to emit events to the server
-  const emitCommand = (cmd: CommandMessage<CommandType>) => {
+  const emitCommand = (cmd: ClientMessage<ClientEvent>) => {
     console.log("Emitting command:", cmd);
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit("message", cmd);

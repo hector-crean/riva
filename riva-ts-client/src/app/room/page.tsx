@@ -1,7 +1,7 @@
 "use client";
 import { useRivaWs } from "@/hooks/socket-io";
-import { EventMessage } from "@/types/EventMessage";
-import { EventType } from "@/types/EventType";
+import { ServerMessage } from "@/types/ServerMessage";
+import { ServerEvent } from "@/types/ServerEvent";
 import { useParams } from "next/navigation";
 import { useEffect } from "react";
 import { RoomTable } from "./rooms-table";
@@ -11,7 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 const Page = () => {
   const queryClient = useQueryClient();
   
-  const handleEvent = async (event: EventMessage<EventType>): Promise<void> => {
+  const handleEvent = async (event: ServerMessage<ServerEvent>): Promise<void> => {
     console.log("Received event:", event);
     match(event.payload)
       .with({ type: "PresentationJoined" }, async () => {

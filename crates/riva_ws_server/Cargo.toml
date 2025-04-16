@@ -24,3 +24,4 @@ serde-generate = { workspace = true }
 serde-reflection = { workspace = true }
 serde-name = { workspace = true }
 http = { workspace = true }
+uuid = { workspace = true }

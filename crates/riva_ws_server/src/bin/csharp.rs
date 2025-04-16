@@ -1,6 +1,4 @@
-use riva_ws_server::events::{
-    Command, Event
-};
+
 use riva_ws_server::room::room_id::RoomId;
 use serde::{Deserialize, Serialize};
 use serde_reflection::{Registry, Samples, Tracer, TracerConfig};
@@ -35,8 +33,6 @@ fn main() -> Result<(), CSharpError> {
     
     
     // Trace payload types
-    tracer.trace_type::<Command>(&samples)?;
-    tracer.trace_type::<Event>(&samples)?;
 
 
     // tracer.trace_type::<ClientMessage<JoinRoomPayload>>(&samples)?;

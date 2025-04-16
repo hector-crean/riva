@@ -1,4 +1,4 @@
-use crate::{events::presentation::{PresentationCommand, PresentationEvent}, room::RoomLike};
+use crate::{events::{presentation::{PresentationCommand, PresentationEvent}, ServerEvent}, room::RoomLike};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::SocketRef;
@@ -39,7 +39,7 @@ impl Presentation {
 impl RoomLike for Presentation {
     const ROOM_TYPE: &'static str = "presentation";
     type Command = PresentationCommand;
-    type Event = PresentationEvent;
+    type Event = ServerEvent;
     fn transaction(&mut self, room_id: RoomId, cmd: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
         match cmd {
             PresentationCommand::ChangeSlide { slide_index, .. } => {
@@ -50,9 +50,9 @@ impl RoomLike for Presentation {
                     "Changing slide"
                 );
                 self.current_slide = slide_index;
-                Some(PresentationEvent::SlideChanged {
+                Some(ServerEvent::Presentation(PresentationEvent::SlideChanged {
                     slide_index: self.current_slide,
-                })
+                }))
             }
             PresentationCommand::JoinPresentation => {
                 let socket_id = socket.id.as_str();
@@ -67,9 +67,11 @@ impl RoomLike for Presentation {
                 socket.join(room_id_str);
                 self.add_client(socket_id);
                 
-                Some(PresentationEvent::PresentationJoined {
-                    socket_id: socket_id.to_string(),
+                Some(ServerEvent::RoomJoined {
                     room_id: room_id.clone(),
+                    socket_id: socket_id.to_string(),
+                    user_info: None,
+                    entered_at: Utc::now(),
                 })
             }
             PresentationCommand::LeavePresentation => {
@@ -85,9 +87,9 @@ impl RoomLike for Presentation {
                 socket.leave(room_id_str);
                 self.remove_client(&socket_id);
                 
-                Some(PresentationEvent::PresentationLeft { 
-                    socket_id, 
-                    room_id: room_id.clone()
+                Some(ServerEvent::RoomLeft { 
+                    room_id: room_id.clone(),
+                    socket_id: socket_id.to_string(),
                 })
             }
         }
