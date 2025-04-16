@@ -3,21 +3,25 @@ use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
+use ts_rs::TS;
 use std::{collections::{HashMap, HashSet}, sync::Arc};
+use crate::RoomLike;
 
 use crate::{Presentation, Room, RoomId, ServerState};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, TS)]
+#[ts(export)]
 pub struct CreateRoomRequest {
     organisation_id: String,
-    room_name: String,
     room_type: String,
+
+    name: String,
     // Additional fields for room configuration
-    name: Option<String>,
     slide_data: Option<Vec<Value>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, TS)]
+#[ts(export)]
 pub struct CreateRoomResponse {
     room_id: RoomId,
     success: bool,
@@ -29,7 +33,7 @@ pub async fn create_room(
     State(state): State<Arc<RwLock<ServerState>>>,
     Json(payload): Json<CreateRoomRequest>,
 ) -> Json<CreateRoomResponse> {
-    let room_id = RoomId::new(&payload.organisation_id, &payload.room_name);
+    let room_id = RoomId::new(&payload.organisation_id, &payload.name);
     let mut state_guard = state.write().await;
     
     // Check if room already exists
@@ -43,11 +47,13 @@ pub async fn create_room(
     
     // Create room based on type
     let room = match payload.room_type.as_str() {
-        "presentation" => {
-            let name = payload.name.unwrap_or_else(|| "Untitled Presentation".to_string());
+        Presentation::ROOM_TYPE => {
+            let room_name = payload.name;
+            let organisation_id = payload.organisation_id;
             let slide_data = payload.slide_data.unwrap_or_default();
             Room::Presentation(Presentation::new(
-                name,
+                room_name,
+                organisation_id,
                 0, // Start at first slide
                 slide_data,
             ))
@@ -73,11 +79,18 @@ pub async fn create_room(
 }
 
 
+#[derive(Serialize, Deserialize, Debug, TS)]
+#[ts(export)]
+pub struct GetRoomsResponse {
+    rooms: Vec<(RoomId, Room)>,
+}
+
+
 
 pub async fn get_rooms(
     State(state): State<Arc<RwLock<ServerState>>>,
-) -> Json<Vec<RoomId>> {
+) -> Json<GetRoomsResponse> {
     let state_guard = state.read().await;
-    let rooms: Vec<RoomId> = state_guard.rooms.keys().cloned().collect();
-    Json(rooms)
+    let rooms: Vec<(RoomId, Room)> = state_guard.rooms.iter().map(|(id, room)| (id.clone(), room.clone())).collect();
+    Json(GetRoomsResponse { rooms })
 }

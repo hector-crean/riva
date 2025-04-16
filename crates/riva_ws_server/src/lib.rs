@@ -27,10 +27,35 @@ use std::sync::Arc;
 
 // Define the server state to be shared across handlers
 
-#[derive(Clone)]
+#[derive(Clone, Debug, TS, Deserialize, Serialize)]
+#[ts(export)]
+#[serde(tag = "type", content = "payload")]
 pub enum Room {
     Presentation(Presentation),
 }
+
+impl Room {
+    fn add_client(&mut self, socket_id: &str) -> bool {
+        match self {
+            Room::Presentation(presentation) => presentation.add_client(socket_id),
+            // Add cases for future variants here
+        }
+    }
+
+    fn remove_client(&mut self, socket_id: &str) -> bool {
+        match self {
+            Room::Presentation(presentation) => presentation.remove_client(socket_id),
+            // Add cases for future variants here
+        }
+    }
+
+    // Implement any other methods required by the RoomLike trait
+    // following the same pattern
+}
+
+
+
+
 
 #[derive(Default, Clone)]
 pub struct ServerState {
@@ -65,17 +90,29 @@ impl WsServer {
     async fn on_connect(socket: SocketRef, State(_): State<Arc<RwLock<ServerState>>>) {
         info!(socket_id = %socket.id, "Socket connected");
 
-        socket.on_disconnect(|socket: SocketRef, reason: DisconnectReason| async move {
+        socket.on_disconnect(|socket: SocketRef, reason: DisconnectReason, State(state): State<Arc<RwLock<ServerState>>>| async move {
             info!(
                 socket_id = %socket.id,
                 namespace = %socket.ns(),
                 reason = ?reason,
                 "Socket disconnected"
             );
-        });
-
-        socket.on("message", || async move {
-          info!("Received message");
+            
+            // Clean up by removing the client from any rooms they were in
+            let mut state_guard = state.write().await;
+            let socket_id = socket.id.to_string();
+            
+            // Iterate through all rooms and remove the disconnected client using the RoomLike trait
+            for (room_id, room) in state_guard.rooms.iter_mut() {
+                let room_id_str: String = room_id.clone().into();
+                if room.remove_client(&socket_id) {
+                    info!(
+                        socket_id = %socket.id,
+                        room_id = %room_id_str,
+                        "Client removed from room"
+                    );
+                }
+            }
         });
 
         socket.on(
@@ -86,7 +123,7 @@ impl WsServer {
                 let room_id = msg.room_id.clone();
                 let room_id_str: String = room_id.clone().into();
                 
-                debug!(
+                info!(
                     socket_id = %socket.id,
                     room_id = %room_id_str,
                     command_type = ?msg.payload,
@@ -98,21 +135,21 @@ impl WsServer {
                 let event = match state_guard.rooms.get_mut(&room_id) {
                     Some(room) => match (room, msg.payload) {
                         (Room::Presentation(presentation), CommandType::Presentation(cmd)) => {
-                            debug!(
+                            info!(
                                 socket_id = %socket.id,
                                 room_id = %room_id_str,
                                 command = ?cmd,
                                 "Processing presentation command"
                             );
                             presentation
-                                .transaction(cmd, &socket)
+                                .transaction(room_id, cmd, &socket)
                                 .map(|event| EventType::Presentation(event))
                         }
-                        (_, cmd_type) => {
+                        (_, _) => {
                             warn!(
                                 socket_id = %socket.id,
                                 room_id = %room_id_str,
-                                command_type = ?cmd_type,
+                                // command_type = ?cmd_type,
                                 "Unsupported operation for room type"
                             );
                             None
@@ -136,13 +173,22 @@ impl WsServer {
                             event_type = ?response,
                             "Emitting event to room"
                         );
-                        if let Err(err) = socket.within(room_id_str).emit("message", &response).await {
-                            // error!(
-                            //     socket_id = %socket.id,
-                            //     room_id = %room_id_str,
-                            //     error = %err,
-                            //     "Failed to emit event"
-                            // );
+                        match socket.within(room_id_str.clone()).emit("message", &response).await {
+                            Ok(_) => {
+                                info!(
+                                    socket_id = %socket.id,
+                                    room_id = %room_id_str,
+                                    "Event emitted to room"
+                                );
+                            },
+                            Err(err) => {
+                                error!(
+                                    socket_id = %socket.id,
+                                    room_id = %room_id_str,
+                                    error = %err,
+                                    "Failed to emit event"
+                                );
+                            }
                         }
                     }
                     None => {

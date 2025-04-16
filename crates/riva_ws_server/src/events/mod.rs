@@ -5,7 +5,7 @@ use presentation::{PresentationCommand, PresentationEvent};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::room::room_id::RoomId;
+use crate::room::{room_id::RoomId, RoomCommand};
 
 
 // Client-to-server message structure
@@ -52,6 +52,8 @@ where
 pub enum CommandType {
     Presentation(PresentationCommand),
 }
+
+
 
 pub type Command = CommandMessage<CommandType>;
 

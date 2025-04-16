@@ -1,36 +1,46 @@
 use crate::{events::presentation::{PresentationCommand, PresentationEvent}, room::RoomLike};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use socketioxide::extract::SocketRef;
 use serde_json::Value;
+use ts_rs::TS;
 use std::collections::HashSet;
 use tracing::{debug, trace};
 
-#[derive(Debug, Clone)]
+use super::room_id::RoomId;
+
+#[derive(Debug, Clone, TS, Deserialize, Serialize)]
+#[ts(export)]
 pub struct Presentation {
-    name: String,
     current_slide: usize,
     slide_data: Vec<Value>,
     clients: HashSet<String>, //socket_ids
+    created_at: DateTime<Utc>,
+    id: RoomId,
 }
 
 impl Presentation {
     pub fn new(
-        name: String,
+        room_name: String,
+        organisation_id: String,
         current_slide: usize,
         slide_data: Vec<Value>,
     ) -> Self {
         Self {
-            name,
             current_slide,
             slide_data,
             clients: HashSet::new(),
+            created_at: Utc::now(),
+            id: RoomId::new(&organisation_id, &room_name),
         }
     }
 }
 
 impl RoomLike for Presentation {
+    const ROOM_TYPE: &'static str = "presentation";
     type Command = PresentationCommand;
     type Event = PresentationEvent;
-    fn transaction(&mut self, cmd: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
+    fn transaction(&mut self, room_id: RoomId, cmd: Self::Command, socket: &SocketRef) -> Option<Self::Event> {
         match cmd {
             PresentationCommand::ChangeSlide { slide_index, .. } => {
                 debug!(
@@ -44,46 +54,54 @@ impl RoomLike for Presentation {
                     slide_index: self.current_slide,
                 })
             }
-            PresentationCommand::JoinPresentation {
-                room_id,
-            } => {
+            PresentationCommand::JoinPresentation => {
+                let socket_id = socket.id.as_str();
                 let room_id_str: String = room_id.clone().into();
+                
                 debug!(
-                    socket_id = %socket.id,
+                    socket_id = %socket_id,
                     room_id = %room_id_str,
                     "Client joining presentation"
                 );
+                
                 socket.join(room_id_str);
-                self.clients.insert(socket.id.as_str().to_string());
+                self.add_client(socket_id);
+                
                 Some(PresentationEvent::PresentationJoined {
-                    socket_id: socket.id.as_str().to_string(),
+                    socket_id: socket_id.to_string(),
                     room_id: room_id.clone(),
                 })
             }
-            PresentationCommand::LeavePresentation { room_id } => {
+            PresentationCommand::LeavePresentation => {
+                let socket_id = socket.id.as_str().to_string();
                 let room_id_str: String = room_id.clone().into();
-                // debug!(
-                //     socket_id = %socket.id,
-                //     client_id = %client_id,
-                //     room_id = %room_id_str,
-                //     "Client leaving presentation"
-                // );
+                
+                debug!(
+                    socket_id = %socket_id,
+                    room_id = %room_id_str,
+                    "Client leaving presentation"
+                );
+                
                 socket.leave(room_id_str);
-                self.clients.remove(&socket.id.as_str().to_string());
-                Some(PresentationEvent::PresentationLeft  { socket_id: socket.id.as_str().to_string(), room_id: room_id.clone()})
+                self.remove_client(&socket_id);
+                
+                Some(PresentationEvent::PresentationLeft { 
+                    socket_id, 
+                    room_id: room_id.clone()
+                })
             }
         }
     }
-    fn add_client(&mut self, client_id: String, socket_id: String) -> bool {
+    
+    fn add_client(&mut self, socket_id: &str) -> bool {
         debug!(
-            client_id = %client_id,
             socket_id = %socket_id,
             clients_count = self.clients.len() + 1,
             "Adding client to presentation"
         );
-        self.clients.insert(socket_id);
-        true
+        self.clients.insert(socket_id.to_string())
     }
+    
     fn remove_client(&mut self, client_id: &str) -> bool {
         debug!(
             client_id = %client_id,
@@ -96,5 +114,11 @@ impl RoomLike for Presentation {
     fn is_empty(&self) -> bool {
         trace!(clients_count = self.clients.len(), "Checking if presentation is empty");
         self.clients.is_empty()
+    }
+    fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+    fn id(&self) -> RoomId {
+        self.id.clone()
     }
 }
