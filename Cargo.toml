@@ -1,5 +1,5 @@
 [workspace]
-members = ["cli", "crates/*"]
+members = ["cli", "ws-server"]
 resolver = "2"
 edition = "2024"
 
@@ -21,10 +21,12 @@ uuid = { version = "1.16.0", features = ["v4", "serde"] }
 chrono = { version = "0.4.40", features = ["serde"] }
 dotenv = "0.15.0"
 tokio = { version = "1.44.2", features = ["full"] }
+tokio-util = "0.7.13"
+reqwest = { version = "0.12.7", features = ["json"] }
 url = "2.4.0"
 clap = { version = "4.5.23", features = ["derive"] }
 ts-rs = {version = "10.1.0", features = ["serde-json-impl", "chrono-impl"]}
-axum = { version = "0.8.3", features = ["ws", "macros"] }
+axum = { version = "0.8.3", features = ["ws", "macros", "multipart"] }
 tower-http = { version = "0.6.2", features = ["cors", "fs"] }
 socketioxide = {version = "0.16.2", features = ["state", "tracing", "extensions", "msgpack"]}
 rmpv = { version = "1.3.0", features = ["serde"] }  
@@ -33,7 +35,12 @@ serde-generate = "0.30.0"
 serde-reflection = "0.5.0"
 serde-name = "0.2.1"
 http = "1.3.1"
+rand = { version = "0.8.5", features = ["small_rng"] }
+json-patch = "4.0.0"
 
+surrealdb = { version = "2.0.4", features = [ "kv-mem"] }
+aws-sdk-s3 = { version = "1.48.0", features = ["behavior-version-latest"] }
+derive_more = { version = "2.0.1"}
 
 [profile.release]
 opt-level = 3

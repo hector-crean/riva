@@ -25,3 +25,12 @@ serde-reflection = { workspace = true }
 serde-name = { workspace = true }
 http = { workspace = true }
 uuid = { workspace = true }
+color-eyre = { workspace = true }
+dotenv = { workspace = true }
+url = { workspace = true }
+reqwest = { workspace = true }
+surrealdb = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+rand = { workspace = true }
+json-patch = { workspace = true }
+derive_more = { workspace = true }

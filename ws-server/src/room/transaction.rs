@@ -1,9 +1,9 @@
-use crate::events::presentation::{PresentationCommand, PresentationEvent};
-use crate::events::{ClientEvent, ServerEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use ts_rs::TS;
 use uuid::Uuid;
+
+use crate::events::ClientMessage;
 
 #[derive(Clone, Debug, TS, Serialize, Deserialize)]
 #[ts(export)]
@@ -11,11 +11,11 @@ pub struct Transaction {
     pub id: String,
     pub client_id: String,
     pub timestamp: u64,
-    pub command: ClientEvent,
+    pub msg: ClientMessage,
 }
 
 impl Transaction {
-    pub fn new(client_id: String, command: ClientEvent) -> Self {
+    #[must_use] pub fn new(client_id: String, msg: ClientMessage) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             client_id,
@@ -23,7 +23,7 @@ impl Transaction {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64,
-            command,
+            msg,
         }
     }
 }
@@ -36,7 +36,7 @@ pub struct TransactionManager {
 }
 
 impl TransactionManager {
-    pub fn new(max_history: usize) -> Self {
+    #[must_use] pub fn new(max_history: usize) -> Self {
         Self {
             history: VecDeque::with_capacity(max_history),
             undone: VecDeque::new(),
@@ -75,7 +75,7 @@ impl TransactionManager {
         }
     }
 
-    pub fn get_history(&self) -> &VecDeque<Transaction> {
+    #[must_use] pub fn get_history(&self) -> &VecDeque<Transaction> {
         &self.history
     }
 } 

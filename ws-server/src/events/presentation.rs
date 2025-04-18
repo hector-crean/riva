@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::room::{room_id::RoomId, RoomCommandLike, RoomEventLike};
+use crate::room::message::{ClientMessageLike, ServerMessageLike};
+
 
 
 
@@ -13,7 +14,7 @@ use crate::room::{room_id::RoomId, RoomCommandLike, RoomEventLike};
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "type")]
-pub enum PresentationCommand {
+pub enum PresentationClientMessage {
     JoinPresentation,
     LeavePresentation,
     ChangeSlide {
@@ -22,9 +23,14 @@ pub enum PresentationCommand {
 }
 
 
-impl RoomCommandLike for PresentationCommand {
-    const COMMAND_NAME: &'static str = "presentation";
-    
+impl ClientMessageLike for PresentationClientMessage {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::JoinPresentation => "JoinPresentation",
+            Self::LeavePresentation => "LeavePresentation",
+            Self::ChangeSlide { .. } => "ChangeSlide",
+        }
+    }
 }
 
 // #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -35,16 +41,16 @@ impl RoomCommandLike for PresentationCommand {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "type")]
-pub enum PresentationEvent {
+pub enum PresentationServerMessage {
     SlideChanged {
         slide_index: usize,
     },
 }
 
-impl RoomEventLike for PresentationEvent {
-    fn event_name(&self) -> &'static str {
+impl ServerMessageLike for PresentationServerMessage {
+    fn name(&self) -> &'static str {
         match self {
-            PresentationEvent::SlideChanged { .. } => "SlideChanged",
+            Self::SlideChanged { .. } => "SlideChanged",
         }
     }
 }

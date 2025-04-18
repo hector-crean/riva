@@ -1,11 +1,11 @@
 pub mod presentation;
 
 use chrono::{DateTime, Utc};
-use presentation::{PresentationCommand, PresentationEvent};
+use presentation::{PresentationClientMessage, PresentationServerMessage};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::room::{room_id::RoomId, RoomEventLike};
+use crate::room::{message::ServerMessageLike, room_id::RoomId};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -29,11 +29,11 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(untagged)]
-pub enum ClientEvent {
-    Presentation(PresentationCommand),
+pub enum ClientMessageType {
+    Presentation(PresentationClientMessage),
 }
 
-pub type ClientMessage = Message<ClientEvent>;
+pub type ClientMessage = Message<ClientMessageType>;
 
 
 
@@ -50,7 +50,7 @@ pub struct UserInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(untagged)]
-pub enum ServerEvent {
+pub enum ServerMessageType {
     RoomCreated {
         room_id: RoomId,
     },
@@ -79,30 +79,30 @@ pub enum ServerEvent {
     Notification,
     // event types associated with a specific room type. Liveblocks has quite an interesting pattern of
     // just sating stoage updated, which is just a prompt for the client to fetch the latest state.
-    Presentation(PresentationEvent),
+    Presentation(PresentationServerMessage),
 
 }
 
-impl RoomEventLike for ServerEvent {
-    fn event_name(&self) -> &'static str {
+impl ServerMessageLike for ServerMessageType {
+    fn name(&self) -> &'static str {
         match self {
-            ServerEvent::Presentation(event) => event.event_name(),
-            ServerEvent::RoomCreated { .. } => "RoomCreated",
-            ServerEvent::RoomDeleted { .. } => "RoomDeleted",
-            ServerEvent::RoomJoined { .. } => "RoomJoined",
-            ServerEvent::RoomLeft { .. } => "RoomLeft",
-            ServerEvent::StorageUpdated { .. } => "StorageUpdated",
-            ServerEvent::CommentCreated { .. } => "CommentCreated",
-            ServerEvent::CommentEdited { .. } => "CommentEdited",
-            ServerEvent::CommentDeleted { .. } => "CommentDeleted",
-            ServerEvent::CommentReactionAdded { .. } => "CommentReactionAdded",
-            ServerEvent::CommentReactionRemoved { .. } => "CommentReactionRemoved",
-            ServerEvent::ThreadCreated { .. } => "ThreadCreated",
-            ServerEvent::ThreadDeleted { .. } => "ThreadDeleted",
-            ServerEvent::ThreadMetadataUpdated { .. } => "ThreadMetadataUpdated",
-            ServerEvent::Notification { .. } => "Notification",
+            ServerMessageType::Presentation(event) => event.name(),
+            ServerMessageType::RoomCreated { .. } => "RoomCreated",
+            ServerMessageType::RoomDeleted { .. } => "RoomDeleted",
+            ServerMessageType::RoomJoined { .. } => "RoomJoined",
+            ServerMessageType::RoomLeft { .. } => "RoomLeft",
+            ServerMessageType::StorageUpdated { .. } => "StorageUpdated",
+            ServerMessageType::CommentCreated { .. } => "CommentCreated",
+            ServerMessageType::CommentEdited { .. } => "CommentEdited",
+            ServerMessageType::CommentDeleted { .. } => "CommentDeleted",
+            ServerMessageType::CommentReactionAdded { .. } => "CommentReactionAdded",
+            ServerMessageType::CommentReactionRemoved { .. } => "CommentReactionRemoved",
+            ServerMessageType::ThreadCreated { .. } => "ThreadCreated",
+            ServerMessageType::ThreadDeleted { .. } => "ThreadDeleted",
+            ServerMessageType::ThreadMetadataUpdated { .. } => "ThreadMetadataUpdated",
+            ServerMessageType::Notification { .. } => "Notification",
         }
     }
 }
 
-pub type ServerMessage = Message<ServerEvent>;
+pub type ServerMessage = Message<ServerMessageType>;

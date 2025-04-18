@@ -11,7 +11,7 @@ pub struct LWWElementSet<T: Clone + Eq + std::hash::Hash + TS> {
 }
 
 impl<T: Clone + Eq + std::hash::Hash + Serialize + for<'de> Deserialize<'de> + TS> LWWElementSet<T> {
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             additions: HashMap::new(),
             removals: HashMap::new(),
@@ -34,7 +34,7 @@ impl<T: Clone + Eq + std::hash::Hash + Serialize + for<'de> Deserialize<'de> + T
         }
     }
 
-    pub fn elements(&self) -> HashSet<T> {
+    #[must_use] pub fn elements(&self) -> HashSet<T> {
         self.additions
             .iter()
             .filter_map(|(element, add_time)| {
@@ -75,7 +75,7 @@ pub struct GCounter {
 }
 
 impl GCounter {
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             counters: HashMap::new(),
         }
@@ -86,7 +86,7 @@ impl GCounter {
         *counter += amount;
     }
 
-    pub fn value(&self) -> u64 {
+    #[must_use] pub fn value(&self) -> u64 {
         self.counters.values().sum()
     }
 
