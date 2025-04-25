@@ -1,19 +1,23 @@
 pub mod database;
 pub mod error;
-pub mod events;
 pub mod file_storage;
 pub mod handlers;
+pub mod message;
+pub mod message_broker;
+pub mod presentation;
 pub mod request_client;
 pub mod room;
 
 use database::{Database, surrealdb::SurrealDatabase};
+use message_broker::{MessageBroker, socket_io::SocketIoMessageBroker};
+use presentation::Presentation;
 
 use crate::room::RoomLike;
 use axum::routing::{delete, get, post, put};
 use error::ServerError;
-use events::{ClientMessage, ClientMessageType};
 use file_storage::{FileStorage, s3::S3Bucket};
-use room::{Room, room_id::RoomId};
+use message::{ClientMessage, ClientMessageType};
+use room::{room_id::RoomId, room_manager::RoomManager};
 use socketioxide::{
     SocketIo,
     extract::{Data, SocketRef, State},
@@ -47,6 +51,8 @@ pub trait AppState: Clone + Send + Sync + 'static {
     type C;
     /// Request handler for the application
     // type R: for<'a> HttpClient<'a>;
+    type Broker: MessageBroker;
+    type Room: RoomLike;
 
     fn new(config: Self::C) -> impl Future<Output = Self> + Send;
 
@@ -56,12 +62,14 @@ pub trait AppState: Clone + Send + Sync + 'static {
 
     fn request_client(&self) -> &reqwest::Client;
 
+    fn room_manager(&self) -> &RoomManager<Self::Broker, Self::Room>;
+
     fn run(&self, port: u16) -> impl Future<Output = Result<(), ServerError>> + Send;
 }
 
 #[derive(Clone)]
 pub struct Application {
-    pub rooms: Arc<RwLock<HashMap<RoomId, Room>>>,
+    room_manager: RoomManager<SocketIoMessageBroker, Presentation>,
     db: SurrealDatabase,
     fs: S3Bucket,
     request_client: reqwest::Client,
@@ -71,6 +79,8 @@ impl AppState for Application {
     type D = SurrealDatabase;
     type F = S3Bucket;
     type C = ApplicationConfig;
+    type Broker = SocketIoMessageBroker;
+    type Room = Presentation;
 
     async fn new(config: Self::C) -> Self {
         let aws_config = aws_sdk_s3::config::Builder::new()
@@ -126,7 +136,10 @@ impl AppState for Application {
 
         let request_client = reqwest::Client::new();
 
+        let room_mananger = RoomManager<SocketIoMessageBroker, Presentation>::new();
+
         Self {
+            room_manager,
             db,
             fs,
             request_client,
@@ -142,6 +155,10 @@ impl AppState for Application {
     }
     fn request_client(&self) -> &reqwest::Client {
         &self.request_client
+    }
+
+    fn room_manager(&self) -> &RoomManager<SocketIoMessageBroker, Presentation> {
+        &self.room_manager
     }
 
     async fn run(&self, port: u16) -> Result<(), ServerError> {
@@ -256,8 +273,6 @@ impl Application {
                 // Iterate through all rooms and remove the disconnected client using the RoomLike trait
                 for (room_id, room) in state_guard.iter_mut() {
                     let room_id_str: String = room_id.clone().into();
-
-                
 
                     if room.remove_client(&socket_id) {
                         info!(

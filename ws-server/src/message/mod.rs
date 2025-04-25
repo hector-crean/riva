@@ -1,12 +1,26 @@
-pub mod presentation;
+use std::fmt::Debug;
 
 use chrono::{DateTime, Utc};
-use presentation::{PresentationClientMessage, PresentationServerMessage};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::room::{message::ServerMessageLike, room_id::RoomId};
+use crate::{
+    presentation::{PresentationClientMessage, PresentationServerMessage},
+    room::{presence::PresenceLike, room_id::RoomId, storage::StorageLike, RoomError},
+};
 
+// Represents messages originating FROM the client TO the server
+pub trait ClientMessageTypeLike: for<'de> Deserialize<'de> + Send + Sync + Debug + 'static + TS {
+    fn name(&self) -> &'static str; // e.g., "updatePresence", "updateStorage"
+}
+
+// Represents messages originating FROM the server TO the client
+pub trait ServerMessageTypeLike: Serialize + Send + Sync + Debug + 'static + TS{
+    fn name(&self) -> &'static str; // e.g., "presenceUpdated", "storageUpdated"
+    fn to_json(&self) -> Result<serde_json::Value, RoomError> {
+        serde_json::to_value(self).map_err(RoomError::SerializationError)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -26,16 +40,27 @@ where
     pub broadcast: Option<bool>, // Indicates if this is a broadcast message
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+
+
+
+
+#[derive(Debug, Clone, TS)]
 #[ts(export)]
-#[serde(untagged)]
-pub enum ClientMessageType {
-    Presentation(PresentationClientMessage),
+pub enum ClientMessageType<Presence: PresenceLike + TS> {
+    PresenceUpdated(Presence),
+    StorageUpdated,
+}
+
+impl<Presence: PresenceLike> ClientMessageTypeLike for ClientMessageType<Presence> {
+    fn name(&self) -> &'static str {
+        match self {
+            ClientMessageType::PresenceUpdated(_) => "presence",
+            ClientMessageType::StorageUpdated => "storage",
+        }
+    }
 }
 
 pub type ClientMessage = Message<ClientMessageType>;
-
-
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -79,14 +104,11 @@ pub enum ServerMessageType {
     Notification,
     // event types associated with a specific room type. Liveblocks has quite an interesting pattern of
     // just sating stoage updated, which is just a prompt for the client to fetch the latest state.
-    Presentation(PresentationServerMessage),
-
 }
 
-impl ServerMessageLike for ServerMessageType {
+impl ServerMessageTypeLike for ServerMessageType {
     fn name(&self) -> &'static str {
         match self {
-            ServerMessageType::Presentation(event) => event.name(),
             ServerMessageType::RoomCreated { .. } => "RoomCreated",
             ServerMessageType::RoomDeleted { .. } => "RoomDeleted",
             ServerMessageType::RoomJoined { .. } => "RoomJoined",
@@ -106,3 +128,5 @@ impl ServerMessageLike for ServerMessageType {
 }
 
 pub type ServerMessage = Message<ServerMessageType>;
+
+

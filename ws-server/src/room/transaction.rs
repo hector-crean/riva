@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::events::ClientMessage;
+use crate::message::ClientMessage;
 
 #[derive(Clone, Debug, TS, Serialize, Deserialize)]
 #[ts(export)]
@@ -15,7 +15,8 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    #[must_use] pub fn new(client_id: String, msg: ClientMessage) -> Self {
+    #[must_use]
+    pub fn new(client_id: String, msg: ClientMessage) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             client_id,
@@ -36,7 +37,8 @@ pub struct TransactionManager {
 }
 
 impl TransactionManager {
-    #[must_use] pub fn new(max_history: usize) -> Self {
+    #[must_use]
+    pub fn new(max_history: usize) -> Self {
         Self {
             history: VecDeque::with_capacity(max_history),
             undone: VecDeque::new(),
@@ -47,10 +49,10 @@ impl TransactionManager {
     pub fn add_transaction(&mut self, transaction: Transaction) {
         // Clear the undo stack when a new transaction is added
         self.undone.clear();
-        
+
         // Add the transaction to history
         self.history.push_back(transaction);
-        
+
         // Maintain history size limit
         if self.history.len() > self.max_history {
             self.history.pop_front();
@@ -75,7 +77,8 @@ impl TransactionManager {
         }
     }
 
-    #[must_use] pub fn get_history(&self) -> &VecDeque<Transaction> {
+    #[must_use]
+    pub fn get_history(&self) -> &VecDeque<Transaction> {
         &self.history
     }
-} 
+}

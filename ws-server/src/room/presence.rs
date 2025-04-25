@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use std::fmt::Debug;
 use thiserror::Error;
 
@@ -14,7 +15,7 @@ pub enum PresenceError {
 
 // Represents the data associated with a single client's presence in the room.
 pub trait PresenceLike:
-    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static
+    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static + TS
 {
     /// Returns a unique identifier for this presence data structure type.
     fn presence_type_id(&self) -> &'static str;

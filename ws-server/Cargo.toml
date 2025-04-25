@@ -11,7 +11,9 @@ socketioxide = { workspace = true }
 tower-http = { workspace = true }
 axum = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, version = "0.3", features = [
+    "env-filter",
+] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
@@ -34,3 +36,4 @@ aws-sdk-s3 = { workspace = true }
 rand = { workspace = true }
 json-patch = { workspace = true }
 derive_more = { workspace = true }
+async-trait = { workspace = true }

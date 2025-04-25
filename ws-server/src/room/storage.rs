@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 // Define a potential error type for storage operations
 #[derive(thiserror::Error, Debug)]
@@ -17,7 +18,7 @@ pub enum StorageError {
 }
 
 pub trait StorageLike:
-    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static
+    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static + TS
 {
     // Consider using an associated type for Diffs if they aren't always JSON
     // type Diff: for<'de> Deserialize<'de> + Serialize + Send + Sync + Debug + 'static;
