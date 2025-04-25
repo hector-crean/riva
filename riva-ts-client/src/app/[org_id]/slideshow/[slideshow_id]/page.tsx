@@ -1,6 +1,6 @@
 "use client";
-import { CommandMessage } from "@/types/CommandMessage";
-import { CommandType } from "@/types/CommandType";
+import { ClientMessage } from "@/types/ClientMessage";
+import { ClientEvent } from "@/types/ClientEvent";
 import { useParams } from "next/navigation";
 import { useEffect } from "react";
 
