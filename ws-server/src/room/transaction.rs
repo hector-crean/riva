@@ -5,18 +5,20 @@ use uuid::Uuid;
 
 use crate::message::ClientMessage;
 
-#[derive(Clone, Debug, TS, Serialize, Deserialize)]
+use super::presence::PresenceLike;
+
+#[derive(Clone, Debug, Serialize, TS)]
 #[ts(export)]
-pub struct Transaction {
+pub struct Transaction<Presence: PresenceLike + TS> {
     pub id: String,
     pub client_id: String,
     pub timestamp: u64,
-    pub msg: ClientMessage,
+    pub msg: ClientMessage<Presence>,
 }
 
-impl Transaction {
+impl<Presence: PresenceLike + TS> Transaction<Presence> {
     #[must_use]
-    pub fn new(client_id: String, msg: ClientMessage) -> Self {
+    pub fn new(client_id: String, msg: ClientMessage<Presence>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             client_id,
@@ -30,13 +32,13 @@ impl Transaction {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct TransactionManager {
-    history: VecDeque<Transaction>,
-    undone: VecDeque<Transaction>,
+pub struct TransactionManager<Presence: PresenceLike + TS> {
+    history: VecDeque<Transaction<Presence>>,
+    undone: VecDeque<Transaction<Presence>>,
     max_history: usize,
 }
 
-impl TransactionManager {
+impl<Presence: PresenceLike + TS> TransactionManager<Presence> {
     #[must_use]
     pub fn new(max_history: usize) -> Self {
         Self {
@@ -46,7 +48,7 @@ impl TransactionManager {
         }
     }
 
-    pub fn add_transaction(&mut self, transaction: Transaction) {
+    pub fn add_transaction(&mut self, transaction: Transaction<Presence>) {
         // Clear the undo stack when a new transaction is added
         self.undone.clear();
 
@@ -59,7 +61,7 @@ impl TransactionManager {
         }
     }
 
-    pub fn undo(&mut self) -> Option<Transaction> {
+    pub fn undo(&mut self) -> Option<Transaction<Presence>> {
         if let Some(transaction) = self.history.pop_back() {
             self.undone.push_back(transaction.clone());
             Some(transaction)
@@ -68,7 +70,7 @@ impl TransactionManager {
         }
     }
 
-    pub fn redo(&mut self) -> Option<Transaction> {
+    pub fn redo(&mut self) -> Option<Transaction<Presence>> {
         if let Some(transaction) = self.undone.pop_back() {
             self.history.push_back(transaction.clone());
             Some(transaction)
@@ -78,7 +80,7 @@ impl TransactionManager {
     }
 
     #[must_use]
-    pub fn get_history(&self) -> &VecDeque<Transaction> {
+    pub fn get_history(&self) -> &VecDeque<Transaction<Presence>> {
         &self.history
     }
 }

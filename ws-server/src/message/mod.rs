@@ -6,16 +6,16 @@ use ts_rs::TS;
 
 use crate::{
     presentation::{PresentationClientMessage, PresentationServerMessage},
-    room::{presence::PresenceLike, room_id::RoomId, storage::StorageLike, RoomError},
+    room::{RoomError, presence::PresenceLike, room_id::RoomId, storage::StorageLike},
 };
 
 // Represents messages originating FROM the client TO the server
-pub trait ClientMessageTypeLike: for<'de> Deserialize<'de> + Send + Sync + Debug + 'static + TS {
+pub trait ClientMessageTypeLike: Serialize + Send + Sync + Debug + 'static {
     fn name(&self) -> &'static str; // e.g., "updatePresence", "updateStorage"
 }
 
 // Represents messages originating FROM the server TO the client
-pub trait ServerMessageTypeLike: Serialize + Send + Sync + Debug + 'static + TS{
+pub trait ServerMessageTypeLike: Serialize + Send + Sync + Debug + 'static {
     fn name(&self) -> &'static str; // e.g., "presenceUpdated", "storageUpdated"
     fn to_json(&self) -> Result<serde_json::Value, RoomError> {
         serde_json::to_value(self).map_err(RoomError::SerializationError)
@@ -24,10 +24,7 @@ pub trait ServerMessageTypeLike: Serialize + Send + Sync + Debug + 'static + TS{
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct Message<T>
-where
-    T: TS,
-{
+pub struct Message<T> {
     pub room_id: RoomId,
     pub payload: T,
     // Server-specific fields
@@ -40,13 +37,12 @@ where
     pub broadcast: Option<bool>, // Indicates if this is a broadcast message
 }
 
-
-
-
-
-#[derive(Debug, Clone, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
-pub enum ClientMessageType<Presence: PresenceLike + TS> {
+pub enum ClientMessageType<Presence>
+where
+    Presence: PresenceLike + TS,
+{
     PresenceUpdated(Presence),
     StorageUpdated,
 }
@@ -59,9 +55,7 @@ impl<Presence: PresenceLike> ClientMessageTypeLike for ClientMessageType<Presenc
         }
     }
 }
-
-pub type ClientMessage = Message<ClientMessageType>;
-
+pub type ClientMessage<Presence: PresenceLike> = Message<ClientMessageType<Presence>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -128,5 +122,3 @@ impl ServerMessageTypeLike for ServerMessageType {
 }
 
 pub type ServerMessage = Message<ServerMessageType>;
-
-

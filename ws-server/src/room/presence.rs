@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use std::fmt::Debug;
 use thiserror::Error;
+use ts_rs::TS;
 
 #[derive(Error, Debug)]
 pub enum PresenceError {
@@ -14,9 +14,7 @@ pub enum PresenceError {
 }
 
 // Represents the data associated with a single client's presence in the room.
-pub trait PresenceLike:
-    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static + TS
-{
+pub trait PresenceLike: Serialize + Send + Sync + Clone + Debug + 'static {
     /// Returns a unique identifier for this presence data structure type.
     fn presence_type_id(&self) -> &'static str;
 
@@ -43,13 +41,11 @@ pub trait PresenceLike:
     }
 
     /// Creates a default presence state for a newly joined client.
-    fn default_state() -> Self where Self: Sized;
+    fn default_state() -> Self
+    where
+        Self: Sized;
 
     // Consider if an 'is_active' concept is needed here, or if that's
     // determined by the Room based on connection status + last_updated.
     // fn is_active(&self) -> bool;
 }
-
-
-
-
