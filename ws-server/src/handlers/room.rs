@@ -10,14 +10,14 @@ use tracing::{error, info};
 use ts_rs::TS;
 
 use crate::{
-    Application, Room,
+    Application,
     message::{Message, ServerMessage},
     presentation::Presentation,
     room::{RoomLike, room_id::RoomId},
 };
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct CreateRoomRequest {
     project_id: Option<String>,
     organisation_id: Option<String>,
@@ -27,8 +27,8 @@ pub struct CreateRoomRequest {
     slide_data: Option<Vec<Value>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct CreateRoomResponse {
     room_id: RoomId,
     success: bool,
@@ -36,10 +36,14 @@ pub struct CreateRoomResponse {
 }
 
 pub async fn create_room(
-    State(Application { rooms, .. }): State<Application>,
+    State(Application { room_manager, .. }): State<Application>,
     Json(payload): Json<CreateRoomRequest>,
 ) -> Json<CreateRoomResponse> {
+
     let room_id = RoomId::new();
+
+    room_manager.add_room(room_id, room);
+
     let mut rooms_state_guard = rooms.write().await;
 
     // Check if room already exists
@@ -91,33 +95,30 @@ pub async fn create_room(
     })
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct GetRoomsResponse {
     rooms: Vec<(RoomId, Room)>,
 }
 
 pub async fn get_rooms(
-    State(Application { rooms, .. }): State<Application>,
+    State(Application { room_manager, .. }): State<Application>,
 ) -> Json<GetRoomsResponse> {
-    let state_guard = rooms.read().await;
-    let rooms: Vec<(RoomId, Room)> = state_guard
-        .iter()
-        .map(|(id, room)| (id.clone(), room.clone()))
-        .collect();
+   
+
     Json(GetRoomsResponse { rooms })
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct GetRoomResponse {
     room: Option<Room>,
     success: bool,
     message: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct RoomError {
     success: bool,
     message: String,
@@ -185,8 +186,8 @@ pub async fn get_room(
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct UpdateRoomRequest {
     room: Room,
 }
@@ -240,8 +241,8 @@ pub async fn delete_room(
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct UpsertRoomRequest {
     organisation_id: String,
     room_type: String,
@@ -296,14 +297,14 @@ pub async fn upsert_room(
     }))
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct BroadcastEventRequest {
     event: ServerMessage,
 }
 
-#[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export)]
+#[derive(Serialize, Deserialize, Debug)]
+
 pub struct BroadcastEventResponse {
     success: bool,
     message: String,

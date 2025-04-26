@@ -4,9 +4,9 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(
-    Display, Debug, Clone, Default, Hash, Eq, PartialEq, Serialize, Deserialize, TS, PartialOrd, Ord,
+    Display, Debug, Clone, Default, Hash, Eq, PartialEq, Serialize, Deserialize, PartialOrd, Ord,
 )]
-#[ts(export)]
+
 pub struct RoomId(String);
 
 impl RoomId {

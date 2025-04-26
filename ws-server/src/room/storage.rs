@@ -18,7 +18,7 @@ pub enum StorageError {
 }
 
 pub trait StorageLike:
-    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static + TS
+    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static
 {
     // Consider using an associated type for Diffs if they aren't always JSON
     // type Diff: for<'de> Deserialize<'de> + Serialize + Send + Sync + Debug + 'static;

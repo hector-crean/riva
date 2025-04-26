@@ -14,8 +14,7 @@ pub enum PresenceError {
 }
 
 // Represents the data associated with a single client's presence in the room.
-pub trait PresenceLike:
-    for<'de> Deserialize<'de> + Serialize + Send + Sync + Clone + Debug + 'static + TS
+pub trait PresenceLike: Send + Sync + Clone + Debug + 'static + Serialize + for<'de> Deserialize<'de>
 {
     /// Returns a unique identifier for this presence data structure type.
     fn presence_type_id(&self) -> &'static str;
@@ -36,11 +35,7 @@ pub trait PresenceLike:
     /// Useful for determining activity or ordering updates.
     fn last_updated(&self) -> DateTime<Utc>;
 
-    /// Serializes the presence data to be sent over the network.
-    /// Might be the same as `Serialize`, but allows for transformation if needed.
-    fn to_network_format(&self) -> Result<serde_json::Value, PresenceError> {
-        serde_json::to_value(self).map_err(PresenceError::SerializationError)
-    }
+   
 
     /// Creates a default presence state for a newly joined client.
     fn default_state() -> Self where Self: Sized;

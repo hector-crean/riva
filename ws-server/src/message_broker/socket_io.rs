@@ -10,6 +10,12 @@ pub struct SocketIoMessageBroker {
     // Implementation details here
 }
 
+impl SocketIoMessageBroker {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 #[async_trait]
 impl MessageBroker for SocketIoMessageBroker {
     // Add Send + Sync + 'static for broad usability (e.g., Arc<dyn Trait>)

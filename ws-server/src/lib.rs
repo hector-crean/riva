@@ -136,14 +136,15 @@ impl AppState for Application {
 
         let request_client = reqwest::Client::new();
 
-        let room_mananger = RoomManager<SocketIoMessageBroker, Presentation>::new();
+        let broker = SocketIoMessageBroker::new();
+
+        let room_manager = RoomManager::<SocketIoMessageBroker, Presentation>::new(broker);
 
         Self {
             room_manager,
             db,
             fs,
             request_client,
-            rooms: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -192,7 +193,7 @@ impl AppState for Application {
         debug!("SocketIO layer created");
 
         // Register the on_connect handler for the root namespace
-        io.ns("/", Self::on_connect);
+        // io.ns("/", Self::on_connect);
         debug!("Root namespace handler registered");
 
         let app = axum::Router::new()
@@ -238,140 +239,3 @@ impl AppState for Application {
     }
 }
 
-impl Application {
-    pub async fn rooms(&self) -> HashMap<RoomId, Room> {
-        self.rooms.read().await.clone()
-    }
-
-    pub async fn with_rooms_mut<F, Fut, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut HashMap<RoomId, Room>) -> Fut,
-        Fut: Future<Output = R>,
-    {
-        let mut state = self.rooms.write().await;
-        f(&mut state).await
-    }
-
-    async fn on_connect(socket: SocketRef, State(Application { rooms, .. }): State<Self>) {
-        info!(socket_id = %socket.id, "Socket connected");
-
-        socket.on_disconnect(
-            |socket: SocketRef,
-             reason: DisconnectReason,
-             State(Application { rooms, .. }): State<Self>| async move {
-                info!(
-                    socket_id = %socket.id,
-                    namespace = %socket.ns(),
-                    reason = ?reason,
-                    "Socket disconnected"
-                );
-
-                // Clean up by removing the client from any rooms they were in
-                let mut state_guard = rooms.write().await;
-                let socket_id = socket.id.to_string();
-
-                // Iterate through all rooms and remove the disconnected client using the RoomLike trait
-                for (room_id, room) in state_guard.iter_mut() {
-                    let room_id_str: String = room_id.clone().into();
-
-                    if room.remove_client(&socket_id) {
-                        info!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            "Client removed from room"
-                        );
-                    }
-                }
-            },
-        );
-
-        socket.on(
-            "message",
-            |socket: SocketRef,
-             Data::<ClientMessage>(msg),
-             State(Application { rooms, .. }): State<Self>| async move {
-                let room_id = msg.room_id.clone();
-                let room_id_str: String = room_id.clone().into();
-
-                info!(
-                    socket_id = %socket.id,
-                    room_id = %room_id_str,
-                    command_type = ?msg.payload,
-                    "Received command"
-                );
-
-                let mut state_guard = rooms.write().await;
-
-                let event = if let Some(room) = state_guard.get_mut(&room_id) {
-                    if let (
-                        Room::Presentation(presentation),
-                        ClientMessageType::Presentation(cmd),
-                    ) = (room, msg.payload)
-                    {
-                        info!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            command = ?cmd,
-                            "Processing presentation command"
-                        );
-                        presentation.transaction(room_id, cmd, &socket)
-                    } else {
-                        warn!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            // command_type = ?cmd_type,
-                            "Unsupported operation for room type"
-                        );
-                        None
-                    }
-                } else {
-                    warn!(
-                        socket_id = %socket.id,
-                        room_id = %room_id_str,
-                        "Room not found"
-                    );
-                    None
-                };
-
-                match event {
-                    Some(response) => {
-                        debug!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            event_type = ?response,
-                            "Emitting event to room"
-                        );
-                        match socket
-                            .within(room_id_str.clone())
-                            .emit("message", &response)
-                            .await
-                        {
-                            Ok(()) => {
-                                info!(
-                                    socket_id = %socket.id,
-                                    room_id = %room_id_str,
-                                    "Event emitted to room"
-                                );
-                            }
-                            Err(err) => {
-                                error!(
-                                    socket_id = %socket.id,
-                                    room_id = %room_id_str,
-                                    error = %err,
-                                    "Failed to emit event"
-                                );
-                            }
-                        }
-                    }
-                    None => {
-                        trace!(
-                            socket_id = %socket.id,
-                            room_id = %room_id_str,
-                            "No event to emit"
-                        );
-                    }
-                }
-            },
-        );
-    }
-}
