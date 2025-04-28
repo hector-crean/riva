@@ -5,7 +5,7 @@ pub mod transaction;
 use std::collections::HashMap;
 
 use crate::message::{ClientMessageTypeLike, Message, ServerMessageTypeLike};
-use crate::message_broker::MessageBroker;
+use crate::message_broker::{MessageBroker, MessageBrokerError};
 use crate::presentation::Presentation;
 use chrono::{DateTime, Utc};
 use client_id::ClientId;
@@ -39,6 +39,8 @@ pub enum RoomError {
     PersistenceError(String),
     #[error("Room not foind: {0}")]
     RoomNotFound(RoomId), // Add other specific room errors
+    #[error("Message broker error: {0}")]
+    MessageBrokerError(MessageBrokerError),
 }
 
 /// Describes the outcome of processing a client message (transaction).
@@ -68,7 +70,7 @@ pub enum TransactionOutcome<ServerMsg: ServerMessageTypeLike, StorageDiff> {
 }
 
 /// Represents the operational capabilities of a collaborative room.
-pub trait RoomLike: Send + Sync + 'static {
+pub trait RoomLike: Send + Sync + 'static + Default  {
     // --- Associated Types ---
     type Storage: StorageLike;
     type Presence: PresenceLike;
@@ -84,6 +86,7 @@ pub trait RoomLike: Send + Sync + 'static {
     // fn project_id(&self) -> Option<&str>;
 
     // --- Core State Access ---
+    fn snapshot(&self) -> Self;
 
     /// Provides immutable access to the room's persistent storage.
     fn storage(&self) -> &Self::Storage;

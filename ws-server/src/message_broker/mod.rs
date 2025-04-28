@@ -3,13 +3,24 @@ use serde::Serialize;
 use std::error::Error as StdError;
 pub mod socket_io;
 
-use crate::room::client_id::ClientId; // Alias for clarity
+use crate::room::{client_id::ClientId, RoomError}; // Alias for clarity
+
+#[derive(Debug, thiserror::Error)]
+pub enum MessageBrokerError {
+    #[error("Message broker error: {0}")]
+    MessageBrokerError,
+}
+
+impl From<MessageBrokerError> for RoomError {
+    fn from(error: MessageBrokerError) -> Self {
+        RoomError::MessageBrokerError(error)
+    }
+}
 
 #[async_trait]
 pub trait MessageBroker: Send + Sync + 'static {
     // Add Send + Sync + 'static for broad usability (e.g., Arc<dyn Trait>)
     /// Associated error type for operations.
-    type Error: StdError + Send + Sync + 'static;
 
     /// Sends a message directly to one or more specific clients.
     async fn send<P>(
@@ -17,7 +28,7 @@ pub trait MessageBroker: Send + Sync + 'static {
         recipients: &[ClientId],
         msg_name: &str,
         payload: P,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), MessageBrokerError>
     where
         P: Serialize + Send + Sync; // Use generic, serializable payload
 
@@ -28,7 +39,7 @@ pub trait MessageBroker: Send + Sync + 'static {
         msg_name: &str,
         payload: P,
         exclude: &[ClientId],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), MessageBrokerError>
     where
         P: Serialize + Send + Sync; // Use generic, serializable payload
 
@@ -38,7 +49,7 @@ pub trait MessageBroker: Send + Sync + 'static {
         msg_name: &str,
         payload: P,
         exclude: &[ClientId],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), MessageBrokerError>
     where
         P: Serialize + Send + Sync;
 }

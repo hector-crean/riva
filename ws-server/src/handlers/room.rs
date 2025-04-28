@@ -1,6 +1,8 @@
 use axum::{
     Json,
     extract::{Path, State},
+    response::{IntoResponse, Response},
+    http::StatusCode,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -8,362 +10,182 @@ use serde_json::Value;
 use socketioxide::SocketIo;
 use tracing::{error, info};
 use ts_rs::TS;
+use std::sync::{Arc, RwLock};
 
 use crate::{
-    Application,
-    message::{Message, ServerMessage},
-    presentation::Presentation,
-    room::{RoomLike, room_id::RoomId},
+    message::{Message, ServerMessage}, message_broker::MessageBroker, presentation::Presentation, room::{room_id::RoomId, room_manager::RoomManager, RoomError, RoomLike}, AppState, Application
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+impl IntoResponse for RoomError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            RoomError::ClientNotFound(client_id) => (
+                StatusCode::NOT_FOUND,
+                format!("Client '{}' not found", client_id),
+            ),
+            RoomError::StorageError(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Storage operation failed: {}", err),
+            ),
+            RoomError::PresenceError(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Presence operation failed: {}", err),
+            ),
+            RoomError::TransactionError(msg) => (
+                StatusCode::BAD_REQUEST,
+                format!("Transaction failed: {}", msg),
+            ),
+            RoomError::SerializationError(err) => (
+                StatusCode::BAD_REQUEST,
+                format!("Serialization error: {}", err),
+            ),
+            RoomError::NetworkError(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Network/Broadcast error: {}", msg),
+            ),
+            RoomError::PersistenceError(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Persistence error: {}", msg),
+            ),
+            RoomError::RoomNotFound(room_id) => (
+                StatusCode::NOT_FOUND,
+                format!("Room not found: {}", room_id),
+            ),
+            RoomError::MessageBrokerError(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Message broker error: {}", err),
+            ),
+        };
 
-pub struct CreateRoomRequest {
-    project_id: Option<String>,
-    organisation_id: Option<String>,
-    room_type: String,
-    room_name: String,
-    // Additional fields for room configuration
-    slide_data: Option<Vec<Value>>,
-}
+        let body = Json(serde_json::json!({
+            "error": message,
+            "status": status.as_u16(),
+        }));
 
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct CreateRoomResponse {
-    room_id: RoomId,
-    success: bool,
-    message: String,
-}
-
-pub async fn create_room(
-    State(Application { room_manager, .. }): State<Application>,
-    Json(payload): Json<CreateRoomRequest>,
-) -> Json<CreateRoomResponse> {
-
-    let room_id = RoomId::new();
-
-    room_manager.add_room(room_id, room);
-
-    let mut rooms_state_guard = rooms.write().await;
-
-    // Check if room already exists
-    if rooms_state_guard.contains_key(&room_id) {
-        return Json(CreateRoomResponse {
-            room_id,
-            success: false,
-            message: "Room already exists".to_string(),
-        });
+        (status, body).into_response()
     }
+}
 
-    let CreateRoomRequest {
-        project_id,
-        organisation_id,
-        room_type,
-        room_name,
-        slide_data,
-    } = payload;
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateRoomRequest<R: RoomLike> {
+    pub project_id: Option<String>,
+    pub organisation_id: Option<String>,
+    pub room_type: String,
+    pub room_name: String,
+    pub room: R,
+}
 
-    // Create room based on type
-    let room = match room_type.as_str() {
-        "presentation" => {
-            let slide_data = slide_data.unwrap_or_default();
-            Room::Presentation(Presentation::new(
-                room_name,
-                organisation_id,
-                project_id,
-                0, // Start at first slide
-                slide_data,
-            ))
-        }
-        // Add other room types here as needed
-        _ => {
-            return Json(CreateRoomResponse {
-                room_id,
-                success: false,
-                message: format!("Unsupported room type: {room_type}"),
-            });
-        }
-    };
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateRoomResponse {
+    pub room_id: RoomId,
+    pub success: bool,
+    pub message: String,
+}
 
-    // Insert the new room
-    rooms_state_guard.insert(room_id.clone(), room);
-
-    Json(CreateRoomResponse {
+pub async fn create_room<S>(
+    State(state): State<S>,
+    Json(payload): Json<CreateRoomRequest<S::Room>>,
+) -> Result<Json<CreateRoomResponse>, RoomError>
+where
+    S: AppState,
+   
+{
+    let room_id = RoomId::new();
+    let new_room = payload.room;
+    
+    let room_manager= state.room_manager();
+    
+    room_manager.add_room(room_id.clone(), new_room).await;
+    
+    Ok(Json(CreateRoomResponse {
         room_id,
         success: true,
         message: "Room created successfully".to_string(),
-    })
+    }))
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-
-pub struct GetRoomsResponse {
-    rooms: Vec<(RoomId, Room)>,
-}
-
-pub async fn get_rooms(
-    State(Application { room_manager, .. }): State<Application>,
-) -> Json<GetRoomsResponse> {
-   
-
-    Json(GetRoomsResponse { rooms })
+pub struct RoomResponse<R: RoomLike> {
+    pub room: Option<R>,
+    pub success: bool,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-
-pub struct GetRoomResponse {
-    room: Option<Room>,
-    success: bool,
-    message: String,
+pub struct UpdateRoomRequest<R: RoomLike> {
+    pub room: R,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct RoomError {
-    success: bool,
-    message: String,
-    room_id: Option<RoomId>,
-    status_code: u16,
-}
-
-impl RoomError {
-    fn invalid_room_id(room_id_str: String) -> Self {
-        Self {
-            success: false,
-            message: format!("Invalid room ID format: {room_id_str}"),
-            room_id: None,
-            status_code: 400,
-        }
-    }
-
-    fn room_not_found(room_id: RoomId) -> Self {
-        Self {
-            success: false,
-            message: "Room not found".to_string(),
-            room_id: Some(room_id),
-            status_code: 404,
-        }
-    }
-
-    fn unsupported_room_type(room_type: String) -> Self {
-        Self {
-            success: false,
-            message: format!("Unsupported room type: {room_type}"),
-            room_id: None,
-            status_code: 400,
-        }
-    }
-}
-
-impl axum::response::IntoResponse for RoomError {
-    fn into_response(self) -> axum::response::Response {
-        let status = axum::http::StatusCode::from_u16(self.status_code)
-            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-
-        (status, Json(self)).into_response()
-    }
-}
-
-// Update get_room handler to use the new error type
-pub async fn get_room(
-    State(Application { rooms, .. }): State<Application>,
+pub async fn get_room<S>(
+    State(state): State<S>,
     Path(room_id_str): Path<String>,
-) -> Result<Json<GetRoomResponse>, RoomError> {
-    let state_guard = rooms.read().await;
+) -> Result<Json<RoomResponse<S::Room>>, RoomError>
+where
+    S: AppState,
+{
+    let room_id = RoomId::try_from(room_id_str)
+        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
-    // Parse the room_id from the path parameter
-    let room_id = RoomId::try_from(room_id_str.clone())
-        .map_err(|_| RoomError::invalid_room_id(room_id_str))?;
+    let room_manager = state.room_manager();
+    let room = room_manager.get_room(&room_id).await?;
 
-    // Look up the room in the state
-    match state_guard.get(&room_id) {
-        Some(room) => Ok(Json(GetRoomResponse {
-            room: Some(room.clone()),
-            success: true,
-            message: "Room found".to_string(),
-        })),
-        None => Err(RoomError::room_not_found(room_id)),
-    }
+    Ok(Json(RoomResponse {
+        room: Some(room),
+        success: true,
+        message: "Room found".to_string(),
+    }))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct UpdateRoomRequest {
-    room: Room,
-}
-
-// Update update_room handler
-pub async fn update_room(
-    State(Application { rooms, .. }): State<Application>,
+pub async fn update_room<S>(
+    State(state): State<S>,
     Path(room_id_str): Path<String>,
-    Json(payload): Json<UpdateRoomRequest>,
-) -> Result<Json<GetRoomResponse>, RoomError> {
-    let mut state_guard = rooms.write().await;
+    Json(payload): Json<UpdateRoomRequest<S::Room>>,
+) -> Result<Json<RoomResponse<S::Room>>, RoomError>
+where
+    S: AppState,
+{
+    let room_id = RoomId::try_from(room_id_str)
+        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
-    // Parse the room_id from the path parameter
-    let room_id = RoomId::try_from(room_id_str.clone())
-        .map_err(|_| RoomError::invalid_room_id(room_id_str))?;
+    let room_manager = state.room_manager();
+    
+    // First get the current room to ensure it exists
+    let _ = room_manager.get_room(&room_id).await?;
+    
+    // Update the room with new data
+    room_manager.update_room(&room_id, payload.room).await?;
+    
+    // Get the updated room snapshot
+    let updated_room = room_manager.get_room(&room_id).await?;
 
-    // Check if the room exists
-    if !state_guard.contains_key(&room_id) {
-        return Err(RoomError::room_not_found(room_id));
-    }
-
-    // Update the room
-    state_guard.insert(room_id.clone(), payload.room);
-
-    Ok(Json(GetRoomResponse {
-        room: state_guard.get(&room_id).cloned(),
+    Ok(Json(RoomResponse {
+        room: Some(updated_room),
         success: true,
         message: "Room updated successfully".to_string(),
     }))
 }
 
-// Update delete_room handler
-pub async fn delete_room(
-    State(Application { rooms, .. }): State<Application>,
+pub async fn delete_room<S>(
+    State(state): State<S>,
     Path(room_id_str): Path<String>,
-) -> Result<Json<GetRoomResponse>, RoomError> {
-    let mut state_guard = rooms.write().await;
+) -> Result<Json<RoomResponse<S::Room>>, RoomError>
+where
+    S: AppState,
+{
+    let room_id = RoomId::try_from(room_id_str)
+        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
-    // Parse the room_id from the path parameter
-    let room_id = RoomId::try_from(room_id_str.clone())
-        .map_err(|_| RoomError::invalid_room_id(room_id_str))?;
+    let room_manager = state.room_manager();
+    
+    // Get the room snapshot before deleting
+    let room = room_manager.get_room(&room_id).await?;
+    
+    // Delete the room
+    room_manager.delete_room(&room_id).await?;
 
-    // Remove the room and return the result
-    match state_guard.remove(&room_id) {
-        Some(room) => Ok(Json(GetRoomResponse {
-            room: Some(room),
-            success: true,
-            message: "Room deleted successfully".to_string(),
-        })),
-        None => Err(RoomError::room_not_found(room_id)),
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct UpsertRoomRequest {
-    organisation_id: String,
-    room_type: String,
-    name: String,
-    slide_data: Option<Vec<Value>>,
-}
-
-// Update upsert_room handler
-pub async fn upsert_room(
-    State(Application { rooms, .. }): State<Application>,
-    Path(room_id_str): Path<String>,
-    Json(payload): Json<UpsertRoomRequest>,
-) -> Result<Json<GetRoomResponse>, RoomError> {
-    let mut state_guard = rooms.write().await;
-
-    // Parse the room_id from the path parameter
-    let room_id = RoomId::try_from(room_id_str.clone())
-        .map_err(|_| RoomError::invalid_room_id(room_id_str))?;
-
-    // Create room based on type
-    let room = match payload.room_type.as_str() {
-        "presentation" => {
-            let room_name = payload.name;
-            let organisation_id = Some(payload.organisation_id);
-            let slide_data = payload.slide_data.unwrap_or_default();
-            Room::Presentation(Presentation::new(
-                room_name,
-                organisation_id,
-                None, // No project_id
-                0,    // Start at first slide
-                slide_data,
-            ))
-        }
-        // Add other room types here as needed
-        _ => return Err(RoomError::unsupported_room_type(payload.room_type)),
-    };
-
-    // Insert or update the room
-    let exists = state_guard.contains_key(&room_id);
-    state_guard.insert(room_id.clone(), room);
-
-    let message = if exists {
-        "Room updated successfully".to_string()
-    } else {
-        "Room created successfully".to_string()
-    };
-
-    Ok(Json(GetRoomResponse {
-        room: state_guard.get(&room_id).cloned(),
+    Ok(Json(RoomResponse {
+        room: Some(room),
         success: true,
-        message,
+        message: "Room deleted successfully".to_string(),
     }))
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct BroadcastEventRequest {
-    event: ServerMessage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-
-pub struct BroadcastEventResponse {
-    success: bool,
-    message: String,
-}
-
-// Update broadcast_event handler
-pub async fn broadcast_event(
-    State(Application { rooms, .. }): State<Application>,
-    Path(room_id_str): Path<String>,
-    io: axum::extract::Extension<SocketIo>,
-    Json(payload): Json<BroadcastEventRequest>,
-) -> Result<Json<BroadcastEventResponse>, RoomError> {
-    // Parse the room_id from the path parameter
-    let room_id = RoomId::try_from(room_id_str.clone())
-        .map_err(|_| RoomError::invalid_room_id(room_id_str.clone()))?;
-
-    // Check if the room exists
-    let state_guard = rooms.read().await;
-    if !state_guard.contains_key(&room_id) {
-        return Err(RoomError::room_not_found(room_id));
-    }
-
-    // Create a server message
-    let message = Message {
-        room_id: room_id.clone(),
-        payload: payload.event,
-        datetime: Utc::now(),
-        sender_id: None,
-        request_id: None,
-        broadcast: Some(true),
-    };
-
-    // Broadcast the event to all clients in the room
-    match io.within(room_id_str).emit("message", &message).await {
-        Ok(()) => {
-            info!(
-                room_id = %room_id.as_str(),
-                "Event broadcasted to room"
-            );
-            Ok(Json(BroadcastEventResponse {
-                success: true,
-                message: "Event broadcasted successfully".to_string(),
-            }))
-        }
-        Err(err) => {
-            error!(
-                room_id = %room_id.as_str(),
-                error = %err,
-                "Failed to broadcast event"
-            );
-
-            let error = RoomError {
-                success: false,
-                message: format!("Failed to broadcast event: {err}"),
-                room_id: Some(room_id),
-                status_code: 500,
-            };
-
-            Err(error)
-        }
-    }
 }

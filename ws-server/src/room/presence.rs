@@ -14,7 +14,7 @@ pub enum PresenceError {
 }
 
 // Represents the data associated with a single client's presence in the room.
-pub trait PresenceLike: Send + Sync + Clone + Debug + 'static + Serialize + for<'de> Deserialize<'de>
+pub trait PresenceLike: Send + Sync + Clone + Debug + 'static + Serialize + for<'de> Deserialize<'de> + Default
 {
     /// Returns a unique identifier for this presence data structure type.
     fn presence_type_id(&self) -> &'static str;
@@ -36,9 +36,6 @@ pub trait PresenceLike: Send + Sync + Clone + Debug + 'static + Serialize + for<
     fn last_updated(&self) -> DateTime<Utc>;
 
    
-
-    /// Creates a default presence state for a newly joined client.
-    fn default_state() -> Self where Self: Sized;
 
     // Consider if an 'is_active' concept is needed here, or if that's
     // determined by the Room based on connection status + last_updated.

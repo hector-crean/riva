@@ -18,9 +18,7 @@ pub struct RoomManager<B: MessageBroker, R: RoomLike> {
 
 impl<B: MessageBroker + Send + Sync + 'static, R: RoomLike + Send + Sync + 'static> RoomManager<B, R>
 where
-    RoomError: std::convert::From<<B as MessageBroker>::Error>,
     R::ClientMessageType: Send + Sync,
-    // Add other necessary bounds for R and its associated types
 {
     pub fn new(msg_broker: B) -> Self {
         Self {
@@ -49,6 +47,50 @@ where
         room_handle
     }
 
+    pub async fn get_room(&self, room_id: &RoomId) -> Result<R, RoomError> {
+        let room_handle = self.get_room_handle(room_id)
+            .await
+            .ok_or_else(|| RoomError::RoomNotFound(room_id.clone()))?;
+
+        let room = room_handle.lock().await;
+        let room_snapshot = room.snapshot();
+    
+        Ok(room_snapshot)
+    }
+
+    /// Updates a room's state using a closure that takes a mutable reference to the room.
+    /// This allows for more flexible updates, including partial updates of the room's state.
+    /// 
+    /// # Example
+    /// ```rust
+    /// room_manager.update_room_with(&room_id, |room| {
+    ///     // Update specific fields of the room
+    ///     room.some_field = new_value;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn update_room_with<F>(&self, room_id: &RoomId, update_fn: F) -> Result<(), RoomError>
+    where
+        F: FnOnce(&mut R) -> Result<(), RoomError>,
+    {
+        let room_handle = self.get_room_handle(room_id)
+            .await
+            .ok_or_else(|| RoomError::RoomNotFound(room_id.clone()))?;
+
+        let mut room_guard = room_handle.lock().await;
+        update_fn(&mut *room_guard)?;
+        
+        Ok(())
+    }
+
+    /// Updates a room's state with a new room instance.
+    /// This is useful for bulk updates or when you need to replace the entire room state.
+    pub async fn update_room(&self, room_id: &RoomId, new_room: R) -> Result<(), RoomError> {
+        self.update_room_with(room_id, |room| {
+            *room = new_room;
+            Ok(())
+        }).await
+    }
 
     pub async fn handle_client_message(
         &self, // Now takes &self because internal state uses Arc/Locks
@@ -91,7 +133,7 @@ where
                 self.msg_broker
                     .as_ref()
                     .broadcast(room_id.as_str(), "message", &message, &exclude)
-                    .await?;
+                    .await.map_err(|e| RoomError::MessageBrokerError(e))?;
             }
             TransactionOutcome::BroadcastStorageUpdate {
                 diff,

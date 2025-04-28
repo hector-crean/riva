@@ -19,7 +19,7 @@ use crate::room::{
     storage::StorageError,
 };
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PresentationStorage {
     current_slide: usize,
     slide_data: Vec<Value>,
@@ -52,7 +52,7 @@ impl StorageLike for PresentationStorage {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PresentationPresence {
     last_updated: DateTime<Utc>,
 }
@@ -65,9 +65,6 @@ impl PresenceLike for PresentationPresence {
         todo!()
     }
     fn merge(&mut self, other: &Self) -> Result<bool, PresenceError> {
-        todo!()
-    }
-    fn default_state() -> Self {
         todo!()
     }
     fn last_updated(&self) -> DateTime<Utc> {
@@ -84,7 +81,7 @@ pub struct PresentationClientData {
     // other metadata
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Presentation {
     id: RoomId,
     created_at: DateTime<Utc>,

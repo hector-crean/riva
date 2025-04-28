@@ -20,14 +20,13 @@ impl SocketIoMessageBroker {
 impl MessageBroker for SocketIoMessageBroker {
     // Add Send + Sync + 'static for broad usability (e.g., Arc<dyn Trait>)
     /// Associated error type for operations.
-    type Error = RoomError;
     /// Sends a message directly to one or more specific clients.
     async fn send<P>(
         &self,
         recipients: &[ClientId],
         msg_name: &str,
         payload: P,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), RoomError>
     where
         P: Serialize + Send + Sync,
     {
@@ -41,7 +40,7 @@ impl MessageBroker for SocketIoMessageBroker {
         msg_name: &str,
         payload: P,
         exclude: &[ClientId],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), RoomError>
     where
         P: Serialize + Send + Sync,
     {
@@ -54,7 +53,7 @@ impl MessageBroker for SocketIoMessageBroker {
         msg_name: &str,
         payload: P,
         exclude: &[ClientId],
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), RoomError>
     where
         P: Serialize + Send + Sync,
     {
