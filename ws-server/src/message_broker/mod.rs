@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::Serialize;
 pub mod socket_io;
+pub mod ws;
 
 use crate::room::{RoomError, client_id::ClientId}; // Alias for clarity
 
@@ -8,6 +9,11 @@ use crate::room::{RoomError, client_id::ClientId}; // Alias for clarity
 pub enum MessageBrokerError {
     #[error("Message broker error")]
     MessageBrokerError,
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Client connection error: {0}")]
+    ConnectionError(String),
 }
 
 impl From<MessageBrokerError> for RoomError {
