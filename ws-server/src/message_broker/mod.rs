@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use serde::Serialize;
-use std::error::Error as StdError;
 pub mod socket_io;
 
-use crate::room::{client_id::ClientId, RoomError}; // Alias for clarity
+use crate::room::{RoomError, client_id::ClientId}; // Alias for clarity
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessageBrokerError {
-    #[error("Message broker error: {0}")]
+    #[error("Message broker error")]
     MessageBrokerError,
 }
 

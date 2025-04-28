@@ -39,6 +39,8 @@ pub enum RoomError {
     PersistenceError(String),
     #[error("Room not foind: {0}")]
     RoomNotFound(RoomId), // Add other specific room errors
+    #[error("Room already exists: {0}")]
+    RoomAlreadyExists(RoomId),
     #[error("Message broker error: {0}")]
     MessageBrokerError(MessageBrokerError),
 }
@@ -70,7 +72,7 @@ pub enum TransactionOutcome<ServerMsg: ServerMessageTypeLike, StorageDiff> {
 }
 
 /// Represents the operational capabilities of a collaborative room.
-pub trait RoomLike: Send + Sync + 'static + Default  {
+pub trait RoomLike: Send + Sync + 'static + Default {
     // --- Associated Types ---
     type Storage: StorageLike;
     type Presence: PresenceLike;

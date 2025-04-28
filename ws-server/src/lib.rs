@@ -200,16 +200,18 @@ impl AppState for Application {
             .nest(
                 "/rooms",
                 axum::Router::new()
-                    .route("/", get(handlers::room::get_rooms))
-                    .route("/", post(handlers::room::create_room))
-                    .route("/{room_id}", get(handlers::room::get_room))
-                    .route("/{room_id}", put(handlers::room::update_room))
-                    .route("/{room_id}", delete(handlers::room::delete_room))
-                    .route("/{room_id}/upsert", post(handlers::room::upsert_room))
+                    .route("/", get(handlers::room::get_rooms::<Self>))
+                    .route("/", post(handlers::room::create_room::<Self>))
+                    .route("/{room_id}", get(handlers::room::get_room::<Self>))
+                    .route("/{room_id}", put(handlers::room::update_room::<Self>))
+                    .route("/{room_id}", delete(handlers::room::delete_room::<Self>))
                     .route(
-                        "/{room_id}/broadcast-event",
-                        post(handlers::room::broadcast_event),
-                    ),
+                        "/{room_id}/upsert",
+                        post(handlers::room::upsert_room::<Self>),
+                    ), // .route(
+                       //     "/{room_id}/broadcast-event",
+                       //     post(handlers::room::broadcast_event),
+                       // ),
             )
             .with_state(shared_state) // Use the same shared state for route handlers
             .layer(axum::Extension(io.clone())) // Add the IO instance as an extension
@@ -238,4 +240,3 @@ impl AppState for Application {
         Ok(())
     }
 }
-

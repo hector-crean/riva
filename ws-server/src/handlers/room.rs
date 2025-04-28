@@ -1,19 +1,23 @@
 use axum::{
     Json,
     extract::{Path, State},
-    response::{IntoResponse, Response},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use socketioxide::SocketIo;
+use std::sync::{Arc, RwLock};
 use tracing::{error, info};
 use ts_rs::TS;
-use std::sync::{Arc, RwLock};
 
 use crate::{
-    message::{Message, ServerMessage}, message_broker::MessageBroker, presentation::Presentation, room::{room_id::RoomId, room_manager::RoomManager, RoomError, RoomLike}, AppState, Application
+    AppState, Application,
+    message::{Message, ServerMessage},
+    message_broker::MessageBroker,
+    presentation::Presentation,
+    room::{RoomError, RoomLike, room_id::RoomId, room_manager::RoomManager},
 };
 
 impl IntoResponse for RoomError {
@@ -55,6 +59,10 @@ impl IntoResponse for RoomError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Message broker error: {}", err),
             ),
+            RoomError::RoomAlreadyExists(room_id) => (
+                StatusCode::BAD_REQUEST,
+                format!("Room already exists: {}", room_id),
+            ),
         };
 
         let body = Json(serde_json::json!({
@@ -88,15 +96,14 @@ pub async fn create_room<S>(
 ) -> Result<Json<CreateRoomResponse>, RoomError>
 where
     S: AppState,
-   
 {
     let room_id = RoomId::new();
     let new_room = payload.room;
-    
-    let room_manager= state.room_manager();
-    
-    room_manager.add_room(room_id.clone(), new_room).await;
-    
+
+    let room_manager = state.room_manager();
+
+    room_manager.add_room(room_id.clone(), new_room).await?;
+
     Ok(Json(CreateRoomResponse {
         room_id,
         success: true,
@@ -123,8 +130,8 @@ pub async fn get_room<S>(
 where
     S: AppState,
 {
-    let room_id = RoomId::try_from(room_id_str)
-        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
+    let room_id =
+        RoomId::try_from(room_id_str).map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
     let room_manager = state.room_manager();
     let room = room_manager.get_room(&room_id).await?;
@@ -144,17 +151,17 @@ pub async fn update_room<S>(
 where
     S: AppState,
 {
-    let room_id = RoomId::try_from(room_id_str)
-        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
+    let room_id =
+        RoomId::try_from(room_id_str).map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
     let room_manager = state.room_manager();
-    
+
     // First get the current room to ensure it exists
     let _ = room_manager.get_room(&room_id).await?;
-    
+
     // Update the room with new data
     room_manager.update_room(&room_id, payload.room).await?;
-    
+
     // Get the updated room snapshot
     let updated_room = room_manager.get_room(&room_id).await?;
 
@@ -172,20 +179,77 @@ pub async fn delete_room<S>(
 where
     S: AppState,
 {
-    let room_id = RoomId::try_from(room_id_str)
-        .map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
+    let room_id =
+        RoomId::try_from(room_id_str).map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
 
     let room_manager = state.room_manager();
-    
+
     // Get the room snapshot before deleting
     let room = room_manager.get_room(&room_id).await?;
-    
+
     // Delete the room
-    room_manager.delete_room(&room_id).await?;
+    room_manager.remove_room(&room_id).await?;
 
     Ok(Json(RoomResponse {
         room: Some(room),
         success: true,
         message: "Room deleted successfully".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetRoomsResponse<R: RoomLike> {
+    pub rooms: Vec<R>,
+    pub success: bool,
+    pub message: String,
+}
+
+pub async fn get_rooms<S>(
+    State(state): State<S>,
+) -> Result<Json<GetRoomsResponse<S::Room>>, RoomError>
+where
+    S: AppState,
+{
+    let room_manager = state.room_manager();
+    let rooms = room_manager.get_rooms().await?;
+
+    Ok(Json(GetRoomsResponse {
+        rooms,
+        success: true,
+        message: "Rooms fetched successfully".to_string(),
+    }))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpsertRoomResponse<R: RoomLike> {
+    pub success: bool,
+    pub message: String,
+    pub room: Option<R>,
+}
+
+pub async fn upsert_room<S>(
+    State(state): State<S>,
+    Path(room_id_str): Path<String>,
+    Json(payload): Json<UpdateRoomRequest<S::Room>>,
+) -> Result<Json<UpsertRoomResponse<S::Room>>, RoomError>
+where
+    S: AppState,
+{
+    let room_id =
+        RoomId::try_from(room_id_str).map_err(|_| RoomError::RoomNotFound(RoomId::new()))?;
+
+    let room_manager = state.room_manager();
+
+    room_manager
+        .update_room_with(&room_id, |room| {
+            *room = payload.room;
+            Ok(())
+        })
+        .await?;
+
+    Ok(Json(UpsertRoomResponse {
+        success: true,
+        message: "Room upserted successfully".to_string(),
+        room: None,
     }))
 }

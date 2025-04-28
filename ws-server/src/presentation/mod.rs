@@ -1,5 +1,6 @@
 use crate::message::{
-    ClientMessage, ClientMessageType, ClientMessageTypeLike, Message, ServerMessage, ServerMessageTypeLike
+    ClientMessage, ClientMessageType, ClientMessageTypeLike, Message, ServerMessage,
+    ServerMessageTypeLike,
 };
 use crate::{
     message::ServerMessageType,
@@ -70,18 +71,16 @@ impl PresenceLike for PresentationPresence {
     fn last_updated(&self) -> DateTime<Utc> {
         todo!()
     }
-
-    
 }
 
-#[derive(Debug, Clone)] // Add necessary derives
+#[derive(Debug, Clone, Serialize, Deserialize)] // Add necessary derives
 pub struct PresentationClientData {
     pub user_id: String,
     pub name: String,
     // other metadata
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Presentation {
     id: RoomId,
     created_at: DateTime<Utc>,
@@ -127,6 +126,10 @@ impl RoomLike for Presentation {
         &self.id
     }
 
+    fn snapshot(&self) -> Self {
+        self.clone()
+    }
+
     fn storage(&self) -> &Self::Storage {
         &self.storage
     }
@@ -160,9 +163,10 @@ impl RoomLike for Presentation {
         Ok(())
     }
 
-
     fn remove_client(&mut self, client_id: &ClientId) -> Result<Self::ClientMetadata, RoomError> {
-        self.clients.remove(client_id).ok_or(RoomError::ClientNotFound(client_id.clone()))
+        self.clients
+            .remove(client_id)
+            .ok_or(RoomError::ClientNotFound(client_id.clone()))
     }
 
     fn is_empty(&self) -> bool {
@@ -187,7 +191,6 @@ impl RoomLike for Presentation {
         self.last_activity = Utc::now();
 
         match message.payload {
-           
             // Handle other client message types...
             _ => {
                 println!("Unhandled message type: {:?}", message.payload.name());
@@ -203,7 +206,6 @@ impl RoomLike for Presentation {
 // }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 #[serde(tag = "type")]
 pub enum PresentationClientMessage {
     JoinPresentation,
@@ -227,7 +229,6 @@ impl ClientMessageTypeLike for PresentationClientMessage {
 // }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 #[serde(tag = "type")]
 pub enum PresentationServerMessage {
     SlideChanged { slide_index: usize },

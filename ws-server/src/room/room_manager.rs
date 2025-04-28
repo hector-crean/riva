@@ -1,11 +1,17 @@
-use super::{client_id::ClientId, presence::PresenceLike, room_id::RoomId, storage::StorageLike, RoomError, RoomLike, TransactionOutcome};
-use crate::{message::{ClientMessageTypeLike, Message, ServerMessageTypeLike}, message_broker::MessageBroker};
+use super::{
+    RoomError, RoomLike, TransactionOutcome, client_id::ClientId, presence::PresenceLike,
+    room_id::RoomId, storage::StorageLike,
+};
+use crate::{
+    message::{ClientMessageTypeLike, Message, ServerMessageTypeLike},
+    message_broker::MessageBroker,
+};
+use serde::Serialize;
 use std::{
     collections::HashMap,
     sync::Arc, // Use std::sync::RwLock for the map if lookups dominate adds/removals
-    // Alternatively, consider crates like dashmap for concurrent HashMaps
+               // Alternatively, consider crates like dashmap for concurrent HashMaps
 };
-use serde::Serialize;
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock}; // Use tokio locks if holding across .await
 
 // Option 1: RwLock for map, Tokio Mutex per Room
@@ -16,7 +22,8 @@ pub struct RoomManager<B: MessageBroker, R: RoomLike> {
     msg_broker: Arc<B>,
 }
 
-impl<B: MessageBroker + Send + Sync + 'static, R: RoomLike + Send + Sync + 'static> RoomManager<B, R>
+impl<B: MessageBroker + Send + Sync + 'static, R: RoomLike + Send + Sync + 'static>
+    RoomManager<B, R>
 where
     R::ClientMessageType: Send + Sync,
 {
@@ -27,15 +34,21 @@ where
         }
     }
 
-    pub async fn add_room(&self, room_id: RoomId, room: R) {
+    pub async fn add_room(&self, room_id: RoomId, room: R) -> Result<(), RoomError> {
         let mut rooms_guard = self.rooms.write().await; // Acquire write lock for the map
-        rooms_guard.insert(room_id, Arc::new(TokioMutex::new(room)));
+        match rooms_guard.insert(room_id.clone(), Arc::new(TokioMutex::new(room))) {
+            Some(_) => Err(RoomError::RoomAlreadyExists(room_id.clone())),
+            None => Ok(()),
+        }
         // map write lock is released when rooms_guard goes out of scope
     }
 
-    pub async fn remove_room(&self, room_id: &RoomId) {
+    pub async fn remove_room(&self, room_id: &RoomId) -> Result<(), RoomError> {
         let mut rooms_guard = self.rooms.write().await; // Acquire write lock for the map
-        rooms_guard.remove(room_id);
+        match rooms_guard.remove(room_id) {
+            Some(_) => Ok(()),
+            None => Err(RoomError::RoomNotFound(room_id.clone())),
+        }
         // map write lock is released here
     }
 
@@ -48,19 +61,34 @@ where
     }
 
     pub async fn get_room(&self, room_id: &RoomId) -> Result<R, RoomError> {
-        let room_handle = self.get_room_handle(room_id)
+        let room_handle = self
+            .get_room_handle(room_id)
             .await
             .ok_or_else(|| RoomError::RoomNotFound(room_id.clone()))?;
 
         let room = room_handle.lock().await;
         let room_snapshot = room.snapshot();
-    
+
         Ok(room_snapshot)
+    }
+
+    pub async fn get_rooms(&self) -> Result<Vec<R>, RoomError> {
+        let rooms_guard = self.rooms.read().await;
+        let mut rooms = Vec::new();
+        for room_mutex in rooms_guard.values() {
+            let room = room_mutex.lock().await;
+            rooms.push(room.snapshot());
+        }
+        Ok(rooms)
+    }
+    pub async fn get_room_count(&self) -> Result<usize, RoomError> {
+        let rooms_guard = self.rooms.read().await;
+        Ok(rooms_guard.len())
     }
 
     /// Updates a room's state using a closure that takes a mutable reference to the room.
     /// This allows for more flexible updates, including partial updates of the room's state.
-    /// 
+    ///
     /// # Example
     /// ```rust
     /// room_manager.update_room_with(&room_id, |room| {
@@ -73,13 +101,14 @@ where
     where
         F: FnOnce(&mut R) -> Result<(), RoomError>,
     {
-        let room_handle = self.get_room_handle(room_id)
+        let room_handle = self
+            .get_room_handle(room_id)
             .await
             .ok_or_else(|| RoomError::RoomNotFound(room_id.clone()))?;
 
         let mut room_guard = room_handle.lock().await;
         update_fn(&mut *room_guard)?;
-        
+
         Ok(())
     }
 
@@ -89,7 +118,8 @@ where
         self.update_room_with(room_id, |room| {
             *room = new_room;
             Ok(())
-        }).await
+        })
+        .await
     }
 
     pub async fn handle_client_message(
@@ -98,9 +128,9 @@ where
         client_id: &ClientId,
         message: Message<R::ClientMessageType>,
     ) -> Result<(), RoomError> {
-
         // 1. Get the handle to the room's lock, briefly locking the map
-        let room_handle = self.get_room_handle(room_id)
+        let room_handle = self
+            .get_room_handle(room_id)
             .await
             .ok_or_else(|| RoomError::RoomNotFound(room_id.clone()))?;
 
@@ -128,21 +158,30 @@ where
                 message,
                 exclude_sender,
             } => {
-                let exclude = if exclude_sender { vec![client_id.clone()] } else { vec![] };
+                let exclude = if exclude_sender {
+                    vec![client_id.clone()]
+                } else {
+                    vec![]
+                };
                 // Perform the async broadcast while holding the room lock
                 self.msg_broker
                     .as_ref()
                     .broadcast(room_id.as_str(), "message", &message, &exclude)
-                    .await.map_err(|e| RoomError::MessageBrokerError(e))?;
+                    .await
+                    .map_err(|e| RoomError::MessageBrokerError(e))?;
             }
             TransactionOutcome::BroadcastStorageUpdate {
                 diff,
                 exclude_sender,
             } => {
-                let exclude = if exclude_sender { vec![client_id.clone()] } else { vec![] };
-                 // If this broadcasts to *all* rooms, it might be complex or slow.
-                 // Usually, storage updates are per-room or global but announced differently.
-                 // Assuming it's for the current room based on the pattern:
+                let exclude = if exclude_sender {
+                    vec![client_id.clone()]
+                } else {
+                    vec![]
+                };
+                // If this broadcasts to *all* rooms, it might be complex or slow.
+                // Usually, storage updates are per-room or global but announced differently.
+                // Assuming it's for the current room based on the pattern:
                 self.msg_broker
                     .as_ref()
                     .broadcast(room_id.as_str(), "storage_update", &diff, &exclude) // Changed topic for clarity
@@ -151,19 +190,19 @@ where
                 // like broadcast_globally or iterate over rooms (potentially complex with locking).
             }
             TransactionOutcome::SendTo { clients, message } => {
-                 // This requires resolving ClientIds to actual connections/topics
-                 // This logic might live in the MessageBroker or need lookup here
-                 for target_client in clients {
-                     // Assuming msg_broker has a send_direct method
-                     // self.msg_broker.send_direct(target_client.id(), "message", &message).await?;
-                 }
+                // This requires resolving ClientIds to actual connections/topics
+                // This logic might live in the MessageBroker or need lookup here
+                for target_client in clients {
+                    // Assuming msg_broker has a send_direct method
+                    // self.msg_broker.send_direct(target_client.id(), "message", &message).await?;
+                }
             }
             TransactionOutcome::Multiple(msgs) => {
                 // Handle multiple outcomes, potentially involving multiple broadcasts/sends
-                 for single_outcome in msgs {
-                     // Recursively handle or inline logic similar to above
-                     // Be mindful of lock duration if this becomes complex
-                 }
+                for single_outcome in msgs {
+                    // Recursively handle or inline logic similar to above
+                    // Be mindful of lock duration if this becomes complex
+                }
             }
         }
 
@@ -172,8 +211,3 @@ where
         Ok(())
     }
 }
-
-
-
-
-
