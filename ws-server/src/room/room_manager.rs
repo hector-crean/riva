@@ -6,13 +6,14 @@ use crate::{
     message::{ClientMessageTypeLike, Message, ServerMessageTypeLike},
     message_broker::MessageBroker,
 };
+use axum::extract::ws::Message;
 use serde::Serialize;
 use std::{
     collections::HashMap,
     sync::Arc, // Use std::sync::RwLock for the map if lookups dominate adds/removals
                // Alternatively, consider crates like dashmap for concurrent HashMaps
 };
-use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock}; // Use tokio locks if holding across .await
+use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock, broadcast::Sender}; // Use tokio locks if holding across .await
 
 // Option 1: RwLock for map, Tokio Mutex per Room
 #[derive(Clone)]
@@ -20,6 +21,9 @@ pub struct RoomManager<B: MessageBroker, R: RoomLike> {
     // Outer lock protects the HashMap structure (add/remove/lookup)
     rooms: Arc<TokioRwLock<HashMap<RoomId, Arc<TokioMutex<R>>>>>, // Using Tokio RwLock for async map access
     msg_broker: Arc<B>,
+    // Maps client IDs to their message senders
+    clients: Arc<TokioRwLock<HashMap<ClientId, Sender<Message>>>>,
+    
 }
 
 impl<B: MessageBroker + Send + Sync + 'static, R: RoomLike + Send + Sync + 'static>
